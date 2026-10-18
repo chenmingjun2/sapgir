@@ -238,6 +238,16 @@ function toast(message, ms = 2400) {
 }
 
 function download(filename, content, mime = 'text/markdown;charset=utf-8') {
+  // Android WebView has no <a download> support; hand the file to MediaStore.
+  if (window.SapgirAndroid?.saveFile) {
+    try {
+      window.SapgirAndroid.saveFile(filename, mime, String(content));
+      return;
+    } catch (_) {
+      // Fall through to the browser path.
+    }
+  }
+
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

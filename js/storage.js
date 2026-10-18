@@ -9,7 +9,7 @@ const CONV_PREFIX = `${PREFIX}conv.`;
 const chromeStorage =
   typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local
     ? chrome.storage.local
-    : null;
+    : (typeof window !== 'undefined' && window.__sapgirStorage) || null;
 
 const chromeSession =
   typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session

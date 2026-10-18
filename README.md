@@ -63,6 +63,19 @@
 
 > 扩展页会在新标签页中打开；再次点击工具栏图标会聚焦已打开的页面，不会打断正在进行的对话。
 
+## Android App
+
+`android/` 提供了基于系统 WebView 的 Android 壳，复用本仓库的前端代码（构建时自动同步，不维护第二份副本），无需 Android Studio。
+
+```bash
+export JAVA_HOME=~/android-toolchain/jdk
+export ANDROID_HOME=~/Android/Sdk
+cd android && echo "sdk.dir=$ANDROID_HOME" > local.properties && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+要求 Android 10+（minSdk 29）。构建环境、签名和移动端适配细节见 [android/README.md](android/README.md)。
+
 ## 使用
 
 - **发送**：`Enter` 发送，`Shift + Enter` 换行。可在设置中改为 `Ctrl/⌘ + Enter` 发送。
@@ -208,6 +221,7 @@ node test/mock-server.mjs
 ├── vendor/                # marked / DOMPurify / highlight.js / KaTeX / Turndown
 ├── assets/                # 原创图标
 ├── screenshots/           # README 截图
+├── android/               # Android WebView 壳（复用本目录前端代码）
 └── test/                  # Mock API 与抓取测试页
 ```
 

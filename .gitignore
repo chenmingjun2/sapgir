@@ -5,3 +5,14 @@ node_modules/
 .env.*
 .DS_Store
 Thumbs.db
+
+# Android build outputs & signing material
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties

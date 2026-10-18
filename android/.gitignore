@@ -1,0 +1,11 @@
+# Android build outputs
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+
+# Signing material — never commit these
+*.jks
+*.keystore
+keystore.properties

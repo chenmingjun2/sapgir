@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sapgir</title>
+    <link rel="icon" href="assets/icon.svg" />
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="styles/app.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+      <aside class="sidebar" id="sidebar" aria-label="对话列表">
+        <div class="sidebar-top">
+          <a class="brand" id="brand-link" href="#" aria-label="Sapgir 首页">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Sapgir</span>
+          </a>
+          <button class="icon-btn sidebar-collapse" id="collapse-btn" title="收起侧边栏" aria-label="收起侧边栏">
+            <span data-icon="panelLeft"></span>
+          </button>
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="new-chat-btn" id="new-chat-btn" title="新对话 (Alt+N)">
+            <span data-icon="plus" data-size="18"></span>
+            <span>新对话</span>
+          </button>
+          <button class="icon-btn" id="search-btn" title="搜索对话 (Ctrl+K)" aria-label="搜索对话">
+            <span data-icon="search"></span>
+          </button>
+        </div>
+
+        <div class="sidebar-search hidden" id="sidebar-search">
+          <span data-icon="search"></span>
+          <input id="conversation-search" type="text" placeholder="搜索对话" autocomplete="off" />
+          <button class="icon-btn tiny" id="search-close" aria-label="关闭搜索">
+            <span data-icon="x" data-size="14"></span>
+          </button>
+        </div>
+
+        <nav class="conversation-list" id="conversation-list"></nav>
+
+        <div class="sidebar-footer">
+          <button class="account" id="account-btn" title="设置">
+            <span class="account-avatar">S</span>
+            <span class="account-text">
+              <b>我的账号</b>
+              <small id="account-sub">自带 API Key</small>
+            </span>
+            <span class="account-settings" data-icon="settings" data-size="16"></span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="icon-btn sidebar-open" id="sidebar-toggle" title="展开侧边栏" aria-label="展开侧边栏">
+            <span data-icon="panelLeft"></span>
+          </button>
+
+          <div class="model-picker" id="model-picker">
+            <button class="model-btn" id="model-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="model-dot"></span>
+              <span id="model-name">deepseek-flash</span>
+              <span class="model-chevron" data-icon="chevronDown" data-size="14"></span>
+            </button>
+            <div class="menu model-menu hidden" id="model-menu" role="menu"></div>
+          </div>
+
+          <div class="topbar-spacer"></div>
+
+          <button class="icon-btn" id="theme-toggle" title="切换主题" aria-label="切换主题">
+            <span data-icon="sun"></span>
+          </button>
+          <button class="icon-btn" id="settings-btn" title="设置" aria-label="设置">
+            <span data-icon="settings"></span>
+          </button>
+        </header>
+
+        <div class="chat-scroll" id="chat-scroll">
+          <div class="chat-inner" id="chat-inner">
+            <section class="welcome" id="welcome">
+              <div class="welcome-mark"><span class="brand-mark big"></span></div>
+              <h1>欢迎使用 Sapgir</h1>
+              <p>我可以帮你写代码、读文件、分析图片、写作各种创意内容，也可以联网查资料。兼容 DeepSeek Chat Completions / Messages 端点，使用你自己的 API Key。</p>
+
+              <div class="welcome-notice hidden" id="api-notice">
+                <div class="welcome-notice-text">
+                  <b>还没有配置 API Key</b>
+                  <span>使用你自己的 API Key，兼容 DeepSeek 端点；密钥只保存在本机。</span>
+                </div>
+                <button class="btn primary" id="notice-settings">去配置</button>
+              </div>
+
+              <div class="suggestions" id="suggestions">
+                <button type="button" data-prompt="用通俗的语言解释一下 Transformer 和注意力机制">
+                  <span class="sug-icon" data-icon="sparkles"></span>
+                  解释一个技术概念
+                </button>
+                <button type="button" data-prompt="帮我写一个 Python 脚本，批量重命名文件夹里的图片">
+                  <span class="sug-icon" data-icon="zap"></span>
+                  写一段代码
+                </button>
+                <button type="button" data-prompt="搜索今天的 AI 行业重要新闻，并总结要点" data-search="1">
+                  <span class="sug-icon" data-icon="globe"></span>
+                  联网查最新资讯
+                </button>
+                <button type="button" data-prompt="请详细描述这张图片的内容" data-attach="1">
+                  <span class="sug-icon" data-icon="image"></span>
+                  分析一张图片
+                </button>
+              </div>
+
+              <div class="welcome-meta">兼容 DeepSeek 端点 · deepseek-flash · 深度思考 · 图片理解 · 联网</div>
+            </section>
+
+            <div class="messages" id="messages"></div>
+          </div>
+        </div>
+
+        <button class="scroll-bottom hidden" id="scroll-bottom" title="回到底部" aria-label="回到底部">
+          <span data-icon="arrowDown"></span>
+        </button>
+
+        <div class="composer-area" id="composer-area">
+          <div class="composer-shell" id="composer-shell">
+            <div class="attachments hidden" id="attachments"></div>
+            <div class="composer-input">
+              <textarea
+                id="composer"
+                rows="1"
+                placeholder="给 Sapgir 发送消息"
+                aria-label="消息输入框"
+              ></textarea>
+            </div>
+            <div class="composer-bar">
+              <label class="icon-btn attach-btn" title="上传图片或文本文件">
+                <input
+                  type="file"
+                  id="file-input"
+                  multiple
+                  accept="image/jpeg,image/png,image/gif,image/webp,.txt,.md,.markdown,.csv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.ts,.jsx,.tsx,.py,.go,.java,.c,.cpp,.h,.rs,.sql,.sh,.toml,.ini"
+                />
+                <span data-icon="paperclip" data-size="18"></span>
+              </label>
+              <button class="chip" id="thinking-toggle" type="button" aria-pressed="false" title="深度思考">
+                <span data-icon="brain" data-size="16"></span>
+                <span>深度思考</span>
+              </button>
+              <button class="chip" id="search-toggle" type="button" aria-pressed="false" title="联网搜索">
+                <span data-icon="globe" data-size="16"></span>
+                <span>联网搜索</span>
+              </button>
+              <div class="composer-spacer"></div>
+              <span class="send-hint" id="send-hint">Enter 发送</span>
+              <button class="send-btn" id="send-btn" type="button" title="发送" aria-label="发送">
+                <span data-icon="arrowUp" data-size="18"></span>
+              </button>
+            </div>
+          </div>
+          <div class="composer-note">内容由 AI 生成，请仔细甄别</div>
+        </div>
+      </main>
+    </div>
+
+    <div class="drop-overlay hidden" id="drop-overlay">
+      <div class="drop-card">
+        <span data-icon="image" data-size="28"></span>
+        <b>松开以添加图片或文本文件</b>
+        <span>支持 JPG / PNG / GIF / WebP 与常见文本文件</span>
+      </div>
+    </div>
+
+    <div class="lightbox hidden" id="lightbox">
+      <button class="lightbox-close" id="lightbox-close" aria-label="关闭">
+        <span data-icon="x" data-size="22"></span>
+      </button>
+      <img id="lightbox-img" alt="预览图片" />
+    </div>
+
+    <div class="toast hidden" id="toast" role="status"></div>
+
+    <!-- Settings -->
+    <dialog class="modal" id="settings-dialog">
+      <div class="modal-card settings-card">
+        <header class="modal-head">
+          <h2>设置</h2>
+          <button class="icon-btn" id="settings-close" aria-label="关闭设置">
+            <span data-icon="x"></span>
+          </button>
+        </header>
+
+        <div class="settings-body">
+          <nav class="settings-nav" id="settings-nav" aria-label="设置分类">
+            <button type="button" data-tab="api" class="active">API 与模型</button>
+            <button type="button" data-tab="chat">对话与工具</button>
+            <button type="button" data-tab="web">联网</button>
+            <button type="button" data-tab="data">数据</button>
+            <button type="button" data-tab="about">关于</button>
+          </nav>
+
+          <div class="settings-content">
+            <section class="settings-panel" data-panel="api">
+              <label class="field">
+                <span class="field-label">API Key</span>
+                <span class="input-with-action">
+                  <input id="set-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+                  <button type="button" class="text-btn" id="toggle-key">显示</button>
+                </span>
+                <span class="field-hint">密钥仅保存在本机浏览器，并且只会发送到你填写的 Base URL。</span>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Base URL</span>
+                <input id="set-base-url" type="url" spellcheck="false" placeholder="https://api.deepseek.com" />
+                <span class="presets">
+                  <button type="button" class="mini-btn" data-base="https://api.deepseek.com">DeepSeek 端点</button>
+                </span>
+              </label>
+
+              <label class="field">
+                <span class="field-label">模型</span>
+                <input id="set-model" list="model-presets" spellcheck="false" placeholder="deepseek-flash" />
+                <datalist id="model-presets">
+                  <option value="deepseek-flash"></option>
+                  <option value="deepseek-v4-pro"></option>
+                  <option value="deepseek-chat"></option>
+                  <option value="deepseek-reasoner"></option>
+                </datalist>
+                <span class="presets">
+                  <button type="button" class="mini-btn" data-model="deepseek-flash">deepseek-flash</button>
+                  <button type="button" class="mini-btn" data-model="deepseek-v4-pro">deepseek-v4-pro</button>
+                </span>
+                <span class="field-hint">推荐 deepseek-flash：支持视觉理解、深度思考与工具调用。</span>
+              </label>
+
+              <div class="field-row">
+                <label class="field">
+                  <span class="field-label">思考强度</span>
+                  <select id="set-effort">
+                    <option value="low">low · 更快</option>
+                    <option value="high">high · 默认</option>
+                    <option value="max">max · 最深</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">最大输出 tokens</span>
+                  <input id="set-max-tokens" type="number" min="0" max="393216" step="256" />
+                  <span class="field-hint">0 表示使用服务端默认值。</span>
+                </label>
+              </div>
+
+              <label class="field">
+                <span class="field-label">自定义系统提示词</span>
+                <textarea id="set-system-prompt" rows="7" spellcheck="false"></textarea>
+                <span class="field-hint">
+                  可以恢复默认：
+                  <button type="button" class="text-btn" id="reset-prompt">恢复默认提示词</button>
+                </span>
+              </label>
+
+              <div class="settings-actions">
+                <button type="button" class="btn" id="test-connection">测试连接</button>
+                <span class="test-result" id="test-result"></span>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-panel="chat" hidden>
+              <label class="switch-row">
+                <span class="switch-copy"><b>默认开启深度思考</b><small>让模型先推理再作答，质量更高但更慢。</small></span>
+                <input type="checkbox" id="set-thinking" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>新对话默认开启联网开关</b><small>开启后新对话的「联网搜索」默认处于手动开启状态；关闭时仍会按上下文自动判断（需开启「按上下文自动判断联网」）。</small></span>
+                <input type="checkbox" id="set-web-search" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>允许网页抓取</b><small>搜索后可以打开具体网页，读取完整正文。</small></span>
+                <input type="checkbox" id="set-allow-fetch" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>自动折叠思考过程</b><small>答案开始输出后收起思考内容。</small></span>
+                <input type="checkbox" id="set-fold-thinking" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>显示 token 用量</b><small>在回答下方显示本次请求的 token 统计。</small></span>
+                <input type="checkbox" id="set-include-usage" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>Enter 发送</b><small>关闭后使用 Ctrl/⌘ + Enter 发送，Enter 换行。</small></span>
+                <input type="checkbox" id="set-send-on-enter" />
+                <span class="switch"></span>
+              </label>
+
+              <div class="field-row">
+                <label class="field">
+                  <span class="field-label">搜索返回条数</span>
+                  <input id="set-search-count" type="number" min="1" max="20" />
+                </label>
+                <label class="field">
+                  <span class="field-label">温度（非思考模式）</span>
+                  <input id="set-temperature" type="number" min="0" max="2" step="0.1" />
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label class="field">
+                  <span class="field-label">主题</span>
+                  <select id="set-theme">
+                    <option value="auto">跟随系统</option>
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">正文字号</span>
+                  <select id="set-font-size">
+                    <option value="15">小 (15px)</option>
+                    <option value="16">标准 (16px)</option>
+                    <option value="17">大 (17px)</option>
+                    <option value="18">特大 (18px)</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-panel="web" hidden>
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <b>按上下文自动判断联网</b>
+                  <small>开启：每轮根据当前问题和最近对话决定是否提供搜索工具；coding、翻译、写作或上下文已足够回答的追问不搜索。关闭：只由输入框「联网搜索」开关控制。</small>
+                </span>
+                <input type="checkbox" id="set-auto-search" />
+                <span class="switch"></span>
+              </label>
+
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <b>Messages 兼容端点（DeepSeek）</b>
+                  <small>开启：整轮走 DeepSeek 的 /anthropic/v1/messages 兼容端点；联网时使用原生 web_search。关闭：走 DeepSeek Chat Completions + DeepSeek Search，更流畅、更省 token。</small>
+                </span>
+                <input type="checkbox" id="set-anthropic-search" />
+                <span class="switch"></span>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Chat 模式搜索</span>
+                <span class="field-hint">
+                  Chat 模式使用 DeepSeek Search API（按成功请求计费）；Messages 模式使用 DeepSeek 的 Messages 兼容端点 + 原生 web_search。两种模式都只访问你配置的 DeepSeek Base URL。
+                </span>
+              </label>
+
+              <label class="field">
+                <span class="field-label">网页抓取方式（Chat 模式）</span>
+                <select id="set-fetch-mode">
+                  <option value="local">插件直接抓取</option>
+                  <option value="deepseek">DeepSeek Fetch API</option>
+                </select>
+              </label>
+
+              <label class="switch-row">
+                <span class="switch-copy"><b>网页抓取失败时回退 DeepSeek Fetch</b><small>本地抓取失败时改用 DeepSeek Fetch API；Messages 模式不提供网页抓取工具。</small></span>
+                <input type="checkbox" id="set-fallback-deepseek" />
+                <span class="switch"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy"><b>允许抓取 localhost / 内网地址</b><small>默认禁止，避免模型访问本机或内网服务。</small></span>
+                <input type="checkbox" id="set-allow-private-fetch" />
+                <span class="switch"></span>
+              </label>
+
+              <div class="settings-actions">
+                <button type="button" class="btn" id="test-search">测试搜索</button>
+                <span class="test-result" id="test-search-result"></span>
+              </div>
+              <p class="field-hint">
+                兼容 DeepSeek 端点；网页抓取由扩展直接请求目标 URL 并转成 Markdown。
+              </p>
+            </section>
+
+            <section class="settings-panel" data-panel="data" hidden>
+              <div class="stat-grid">
+                <div class="stat"><b id="stat-conversations">0</b><span>对话</span></div>
+                <div class="stat"><b id="stat-messages">0</b><span>消息</span></div>
+              </div>
+
+              <div class="data-actions">
+                <button type="button" class="btn" id="export-data">
+                  <span data-icon="download" data-size="16"></span>导出全部对话
+                </button>
+                <button type="button" class="btn" id="import-data">
+                  <span data-icon="upload" data-size="16"></span>导入备份
+                </button>
+                <input type="file" id="import-file" accept="application/json,.json" hidden />
+                <button type="button" class="btn danger" id="clear-data">
+                  <span data-icon="trash" data-size="16"></span>清空全部数据
+                </button>
+              </div>
+              <p class="field-hint">
+                对话与设置保存在浏览器本地（chrome.storage.local）。导出文件不包含 API Key。
+              </p>
+            </section>
+
+            <section class="settings-panel" data-panel="about" hidden>
+              <div class="about-brand">
+                <span class="brand-mark big"></span>
+                <div>
+                  <b>Sapgir</b>
+                  <span>版本 1.0.0</span>
+                </div>
+              </div>
+              <ul class="about-list">
+                <li><span data-icon="check"></span>自绘聊天界面，兼容 DeepSeek 端点</li>
+                <li><span data-icon="check"></span>使用自己的 API Key，无中转、无服务器</li>
+                <li><span data-icon="check"></span>支持 deepseek-flash 原生图片理解</li>
+                <li><span data-icon="check"></span>Messages 兼容端点原生搜索 / DeepSeek Search</li>
+                <li><span data-icon="check"></span>插件直接抓取网页并转为 Markdown</li>
+                <li><span data-icon="check"></span>深度思考、流式输出、Markdown、代码高亮</li>
+                <li><span data-icon="check"></span>对话历史本地保存，可导出 / 导入</li>
+              </ul>
+              <p class="field-hint">
+                本项目与 DeepSeek 官方无关，仅通过你配置的端点调用 DeepSeek 公开 API。搜索与网页抓取按 DeepSeek 的 Search / Fetch API 计费。
+              </p>
+              <p class="field-hint">
+                名字致敬俄罗斯诗人 Genrikh Sapgir（1928–1999）；本项目与其遗产/权利方无关。
+              </p>
+              <div class="about-links">
+                <a href="https://api-docs.deepseek.com/" target="_blank" rel="noopener noreferrer">
+                  查看 API 文档 <span data-icon="external" data-size="14"></span>
+                </a>
+                <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">
+                  获取 API Key <span data-icon="external" data-size="14"></span>
+                </a>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <footer class="modal-foot">
+          <button type="button" class="btn" id="settings-cancel">取消</button>
+          <button type="button" class="btn primary" id="settings-save">保存</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- Rename -->
+    <dialog class="modal small" id="rename-dialog">
+      <form method="dialog" class="modal-card small-card">
+        <header class="modal-head"><h2>重命名对话</h2></header>
+        <div class="modal-simple-body">
+          <input id="rename-input" type="text" maxlength="80" autocomplete="off" />
+        </div>
+        <footer class="modal-foot">
+          <button type="button" class="btn" id="rename-cancel">取消</button>
+          <button type="button" class="btn primary" id="rename-save">保存</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- Confirm -->
+    <dialog class="modal small" id="confirm-dialog">
+      <div class="modal-card small-card">
+        <header class="modal-head"><h2 id="confirm-title">确认</h2></header>
+        <div class="modal-simple-body">
+          <p id="confirm-message"></p>
+        </div>
+        <footer class="modal-foot">
+          <button type="button" class="btn" id="confirm-cancel">取消</button>
+          <button type="button" class="btn danger-solid" id="confirm-ok">确定</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/purify.min.js"></script>
+    <script src="vendor/highlight.min.js"></script>
+    <script src="vendor/turndown.js"></script>
+    <script src="vendor/turndown-plugin-gfm.js"></script>
+    <script src="vendor/katex/katex.min.js"></script>
+    <script src="vendor/katex/auto-render.min.js"></script>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+.playwright-mcp/
+*.zip
+.env
+.env.*
+.DS_Store
+Thumbs.db

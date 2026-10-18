@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Sapgir",
+  "short_name": "Sapgir",
+  "version": "1.0.0",
+  "description": "兼容 DeepSeek Chat Completions / Messages 端点的自带 Key AI 聊天客户端。",
+  "minimum_chrome_version": "116",
+  "action": {
+    "default_title": "打开 Sapgir",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "contextMenus",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

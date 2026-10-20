@@ -100,6 +100,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 DeepSeek 端�
 - 如果启用了联网工具，涉及实时信息、新闻、价格、版本等问题时优先搜索，而不是凭记忆回答。`;
 
 export const DEFAULT_SETTINGS = {
+  settingsVersion: 2,
   apiKey: '',
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-flash',
@@ -112,7 +113,7 @@ export const DEFAULT_SETTINGS = {
   autoSearch: true,
   searchCount: 8,
   allowFetch: true,
-  searchBackend: 'anthropic',
+  searchBackend: 'builtin',
   webFetchMode: 'local',
   fallbackDeepSeek: true,
   allowPrivateFetch: false,
@@ -128,8 +129,16 @@ export async function loadSettings() {
   const saved = (await getItem('settings', {})) || {};
   const settings = { ...DEFAULT_SETTINGS, ...saved };
 
+  // v2: Chat Completions + DeepSeek Search became the default. Migrate the old
+  // implicit default once; after that the user's explicit choice is preserved.
+  const savedVersion = Number(saved.settingsVersion) || 1;
+  if (savedVersion < 2 && saved.searchBackend === 'anthropic') {
+    settings.searchBackend = 'builtin';
+  }
+  settings.settingsVersion = 2;
+
   if (!['anthropic', 'builtin'].includes(settings.searchBackend)) {
-    settings.searchBackend = 'anthropic';
+    settings.searchBackend = 'builtin';
   }
   // Remove legacy provider fields from older backups/settings.
   delete settings.searchProvider;

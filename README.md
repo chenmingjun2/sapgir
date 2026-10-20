@@ -34,10 +34,10 @@
 
 - **自带 API Key**：兼容 DeepSeek 端点和任意 OpenAI 兼容的 Base URL；支持自定义模型名、测试连接、查看可用模型。
 - **两种 DeepSeek 端点**：
-  - **Messages 兼容端点（默认）**：`POST /anthropic/v1/messages`，适合 coding、原生搜索和长上下文。
-  - **Chat 模式**：`POST /chat/completions`，更适合普通对话；搜索走 DeepSeek Search API。
+  - **Chat 模式（默认）**：`POST /chat/completions`，搜索走 DeepSeek Search API，结果结构化、可抓取、成本可控。
+  - **Messages 兼容端点**：`POST /anthropic/v1/messages`，适合 Claude 生态、原生搜索一体化和长上下文。
 - **默认 `deepseek-flash` 原生多模态**：上传 / 粘贴 / 拖拽图片（JPG、PNG、GIF、WebP），自动压缩后以 base64 发送；支持多图、图片预览大图、历史图片回放。
-- **按上下文联网**：默认自动判断是否需要搜索。只有最新/实时/新闻/价格/天气/版本等需要外部信息的问题，或用户明确要求搜索时，才向模型提供搜索工具；coding、翻译、写作、上下文已足够的追问不搜索。
+- **按上下文联网**：默认自动判断是否需要搜索。命中最新/实时/新闻/价格/天气/版本等关键词时，即使联网开关关闭也会先自动检索一次；coding、翻译、写作、上下文已足够的追问不搜索。
 - **搜索与来源默认折叠**：搜索过程和参考来源放在回答上方，默认收起，点击标题展开，不挤占正文。
 - **深度思考**：开关、`low / high / max` 思考强度、实时展示思考过程与耗时，可自动折叠。
 - **append-only 上下文**：稳定 system 快照 + 隐藏工具调用记录，让同一对话的请求前缀保持不变，最大化 DeepSeek 的前缀缓存命中；用量区会显示「缓存 xx%」。
@@ -58,7 +58,7 @@
    - **Base URL**：默认 `https://api.deepseek.com`。
    - **模型**：默认 `deepseek-flash`（推荐，支持图片理解）。
    - 可点击 **测试连接** 验证 Key 和网络。
-   - **联网**：默认开启 **Messages 兼容端点**；开启「按上下文自动判断联网」后，不需要每轮手动打开搜索。Chat 模式的搜索使用 DeepSeek Search API。
+   - **联网**：默认使用 **Chat 模式 + DeepSeek Search**；开启「按上下文自动判断联网」后，不需要每轮手动打开搜索。命中联网关键词时，即使输入框的联网开关关闭，也会先自动检索一次。
    - 点击 **保存**。
 
 > 扩展页会在新标签页中打开；再次点击工具栏图标会聚焦已打开的页面，不会打断正在进行的对话。
@@ -80,10 +80,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - **发送**：`Enter` 发送，`Shift + Enter` 换行。可在设置中改为 `Ctrl/⌘ + Enter` 发送。
 - **深度思考**：输入框左侧的「深度思考」开关；思考过程会实时显示，回答开始后自动折叠。
-- **联网搜索**：默认按上下文判断。当前问题需要最新/外部/可核实信息时，自动向模型提供搜索工具；模型再决定是否实际调用。
-  - **Messages 兼容端点（默认）**：整轮走 `/anthropic/v1/messages`。需要联网时使用 DeepSeek 原生 `web_search` 服务端工具；不需要时不带工具，适合 coding。
-  - **Chat 模式**：整轮走 `/chat/completions`；需要联网时使用 DeepSeek Search API，不依赖第三方搜索 provider。
-  - 输入框的「联网搜索」是手动强制开关；想完全自动，保持它关闭。
+- **联网搜索**：默认按上下文判断。命中最新/实时/新闻/价格/版本等关键词时，即使输入框的「联网搜索」关闭，也会先用 DeepSeek Search API 自动检索一次，再把结果交给模型回答；模型仍可按需补充搜索或抓取原文。
+  - **Chat 模式（默认）**：整轮走 `/chat/completions`；搜索走 DeepSeek Search API，抓取走本地 fetch + Fetch API 回退。
+  - **Messages 兼容端点**：整轮走 `/anthropic/v1/messages`。需要联网时使用 DeepSeek 原生 `web_search` 服务端工具，搜索和回答由同一个端点完成。
+  - 输入框的「联网搜索」是手动开关；想完全自动，保持它关闭。
   - 搜索结果和「参考来源」默认折叠在回答上方；点击搜索摘要或来源标题可展开。
 - **网页抓取（Chat 模式）**：默认由插件直接请求 URL、用 Turndown 转成 Markdown；失败时可回退 DeepSeek Fetch API。Messages 模式不提供插件 `web_fetch`。
 - **图片**：点击回形针、直接粘贴截图，或把图片拖进页面；发送前可点击缩略图查看大图。
@@ -99,16 +99,18 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 模型与 API
 
-扩展有两条 DeepSeek 端点路径，由 **设置 → 联网 → Messages 兼容端点（DeepSeek）** 切换：
+扩展有两条 DeepSeek 端点路径，由 **设置 → 联网 → 使用 Messages 兼容端点** 切换；默认是 Chat 模式。
 
-**Chat 模式** 使用 OpenAI 兼容的 **Chat Completions**：
+> 从旧版本升级时，如果之前保存的是 Messages 模式，会自动切换一次到 Chat 模式；仍可在设置里改回。
+
+**Chat 模式（默认）** 使用 OpenAI 兼容的 **Chat Completions**：
 
 ```text
 POST {baseUrl}/chat/completions
 Authorization: Bearer <API_KEY>
 ```
 
-**Messages 兼容模式（默认）** 使用 DeepSeek 的 Messages 兼容接口：
+**Messages 兼容模式** 使用 DeepSeek 的 Messages 兼容接口：
 
 ```text
 POST {baseUrl}/anthropic/v1/messages
@@ -135,18 +137,19 @@ anthropic-version: 2023-06-01
 
 ### 搜索实现
 
-**Messages 兼容模式（默认）**
+**Chat 模式（默认）**
+
+- 搜索：`POST {baseUrl}/v1/tools/search`（DeepSeek Search API）
+- 自动搜索：命中联网关键词且输入框开关关闭时，先用 Search API 预检索一次，把结果注入本轮上下文，再让模型回答；10 分钟内重新生成会复用上次结果，避免重复计费。
+- 抓取：本地 fetch + HTML → Markdown；失败回退 `POST /v1/tools/fetch`
+- 只使用 DeepSeek Search API / Messages 端点；只需一个 DeepSeek API Key。
+
+**Messages 兼容模式**
 
 - 端点：DeepSeek `/anthropic/v1/messages`
 - 工具：`{"type":"web_search_20250305","name":"web_search","max_uses":N}`
 - 返回：流式 `thinking_delta` / `text_delta` / `server_tool_use` / `web_search_tool_result`
 - 来源从 `web_search_tool_result` 提取；搜索和最终回答由同一个端点完成。
-
-**Chat 模式**
-
-- 搜索：`POST {baseUrl}/v1/tools/search`（DeepSeek Search API）
-- 抓取：本地 fetch + HTML → Markdown；失败回退 `POST /v1/tools/fetch`
-- 只使用 DeepSeek Search API / Messages 端点；只需一个 DeepSeek API Key。
 
 #### 网页抓取
 
@@ -173,7 +176,7 @@ anthropic-version: 2023-06-01
 - **必须使用 DeepSeek API Key**：搜索与模型请求都通过 DeepSeek 端点。
 - **Messages 模式无插件抓取**：该模式只有原生 `web_search`，需要抓取原文时切换到 Chat 模式。
 - **Messages 偶发未完成**：极少数情况下端点会以 `tool_use` / `pause_turn` 结束；当前会显示可重试错误。
-- **Chat 搜索轮次不固定**：自动判断可减少不必要的搜索，但模型仍可能多次调用 DeepSeek Search。
+- **Chat 搜索轮次不固定**：命中关键词会先自动检索一次，但模型仍可能按需补充搜索；搜索次数和费用以实际请求为准。
 - **PDF / Word 暂不解析**：目前支持图片和常见文本文件。
 - **GIF 会取首帧**。
 - **公式**：支持 `$$...$$`、`\(...\)`、`\[...\]`，不解析单美元 `$...$`。
@@ -196,7 +199,7 @@ python3 -m http.server 8765
 ```bash
 node test/mock-server.mjs
 # 在设置里把 Base URL 改为 http://127.0.0.1:8766
-# Mock 只有 Chat 端点；请先关闭 Messages 兼容模式
+# Mock 支持 Chat Completions + Search/Fetch，不支持 Messages 端点
 ```
 
 本地抓取测试页：`test/fetch-fixture.html`。

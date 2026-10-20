@@ -337,7 +337,7 @@
               <label class="switch-row">
                 <span class="switch-copy">
                   <b>按上下文自动判断联网</b>
-                  <small>开启：每轮根据当前问题和最近对话决定是否提供搜索工具；coding、翻译、写作或上下文已足够回答的追问不搜索。关闭：只由输入框「联网搜索」开关控制。</small>
+                  <small>开启：命中最新、新闻、价格、版本等联网关键词时，即使输入框「联网搜索」关闭，也会先自动检索一次再回答；coding、翻译、写作或上下文已足够回答的追问不搜索。关闭：只由输入框「联网搜索」开关控制。</small>
                 </span>
                 <input type="checkbox" id="set-auto-search" />
                 <span class="switch"></span>
@@ -345,17 +345,17 @@
 
               <label class="switch-row">
                 <span class="switch-copy">
-                  <b>Messages 兼容端点（DeepSeek）</b>
-                  <small>开启：整轮走 DeepSeek 的 /anthropic/v1/messages 兼容端点；联网时使用原生 web_search。关闭：走 DeepSeek Chat Completions + DeepSeek Search，更流畅、更省 token。</small>
+                  <b>使用 Messages 兼容端点（兼容模式）</b>
+                  <small>默认关闭：走 DeepSeek Chat Completions + DeepSeek Search，支持结构化结果、网页抓取和命中关键词的自动检索。开启：整轮走 /anthropic/v1/messages，联网时使用原生 web_search。</small>
                 </span>
                 <input type="checkbox" id="set-anthropic-search" />
                 <span class="switch"></span>
               </label>
 
               <label class="field">
-                <span class="field-label">Chat 模式搜索</span>
+                <span class="field-label">Chat 模式搜索（默认）</span>
                 <span class="field-hint">
-                  Chat 模式使用 DeepSeek Search API（按成功请求计费）；Messages 模式使用 DeepSeek 的 Messages 兼容端点 + 原生 web_search。两种模式都只访问你配置的 DeepSeek Base URL。
+                  Chat 模式使用 DeepSeek Search API（按成功请求计费）；命中关键词且「联网搜索」关闭时会先自动检索一次，模型仍可按需补充搜索。Messages 模式使用 Messages 兼容端点 + 原生 web_search。两种模式都只访问你配置的 DeepSeek Base URL。
                 </span>
               </label>
 

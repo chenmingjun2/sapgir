@@ -47,6 +47,9 @@ const MAX_ATTACHMENTS = 6;
 const MAX_IMAGE_DIM = 1600;
 const MAX_TEXT_CHARS = 150000;
 const TOOL_LOOP_LIMIT = 6;
+// Reuse a keyword-triggered search for regenerations within this window instead
+// of paying for the same query again.
+const AUTO_SEARCH_TTL = 10 * 60 * 1000;
 
 const TEXT_EXTENSIONS = [
   'txt', 'md', 'markdown', 'csv', 'json', 'log', 'yaml', 'yml', 'xml', 'html',
@@ -196,6 +199,45 @@ function messageWantsSearch(text, convo = null) {
   // Ambiguous general questions default to no search; the user can force it
   // with the composer toggle or by asking explicitly.
   return false;
+}
+
+function cleanSearchText(value) {
+  return String(value || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/<file[\s\S]*?<\/file>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Build a useful one-shot query for keyword-triggered auto search. Short
+ * follow-ups such as "那最新价格呢" get the previous question prepended so the
+ * search engine has enough context.
+ */
+function autoSearchQuery(text, convo = null) {
+  const current = cleanSearchText(text);
+  if (!current) return '';
+
+  if (current.length >= 60) return current.slice(0, 128);
+
+  const messages = Array.isArray(convo?.messages) ? convo.messages : [];
+  const previous = [...messages]
+    .reverse()
+    .find(
+      (msg) =>
+        msg.role === 'user' &&
+        msg.content &&
+        cleanSearchText(msg.content) !== current
+    );
+
+  if (
+    previous &&
+    /(这个|那个|它|其|那|还|再|最新|现在|目前|价格|多少钱|怎么样)/.test(current)
+  ) {
+    return `${cleanSearchText(previous.content).slice(0, 70)} ${current}`.slice(0, 128);
+  }
+
+  return current.slice(0, 128);
 }
 
 function makeTitle(text, hasImages = false) {
@@ -1081,7 +1123,9 @@ function renderToolPanel(el, entries, { open = false, live = false, sources = []
     const label = document.createElement('span');
     label.className = 'q';
     if (entry.name === 'web_search') {
-      label.textContent = `搜索：${entry.args?.query || ''}`;
+      label.textContent = `${entry.auto ? '自动搜索' : '搜索'}${
+        entry.cached ? '（复用）' : ''
+      }：${entry.args?.query || ''}`;
     } else if (entry.name === 'web_fetch') {
       let host = entry.args?.url || '';
       try {
@@ -1219,7 +1263,13 @@ async function sendMessage() {
     state.settings.autoSearch !== false &&
     messageWantsSearch(text, state.convo);
   const useTools = state.webOn || autoSearch;
-  if (autoSearch) toast('本轮按上下文启用联网（模型按需调用）');
+  if (autoSearch) {
+    toast(
+      state.settings.searchBackend === 'anthropic'
+        ? '本轮命中联网关键词，使用 Messages 原生搜索…'
+        : '本轮命中联网关键词，正在自动检索…'
+    );
+  }
 
   closeConversationMenu();
   const attachments = state.attachments.slice();
@@ -1244,7 +1294,7 @@ async function sendMessage() {
   scrollToBottom(true, true);
   await persistConversation();
 
-  await runAssistantTurn({ useTools });
+  await runAssistantTurn({ useTools, autoSearch });
 }
 
 function startThinkingClock(run) {
@@ -1502,6 +1552,144 @@ async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useT
   }
 }
 
+/**
+ * Keyword-triggered search. Unlike the normal model-driven tool loop this runs
+ * before the first model request, so "最新/新闻/价格" questions still get
+ * searched when the composer's web toggle is off.
+ */
+async function runAutoSearch(run, { query, count, oriQuestion }) {
+  const entry = {
+    id: uid('tool'),
+    name: 'web_search',
+    args: { query, count },
+    status: 'running',
+    count: 0,
+    links: [],
+    error: null,
+    meta: null,
+    provider: 'deepseek',
+    auto: true,
+  };
+  run.toolEntries.push(entry);
+  renderToolPanel(run.el, run.toolEntries, {
+    open: false,
+    live: true,
+    sources: run.assistant.sources,
+  });
+  autoScroll(run);
+
+  try {
+    const out = await executeTool({
+      baseUrl: state.settings.baseUrl,
+      apiKey: state.settings.apiKey,
+      name: 'web_search',
+      args: { query, count },
+      signal: run.controller.signal,
+      defaultCount: state.settings.searchCount,
+      oriQuestion,
+      sourceOffset: 0,
+      existingUrls: [],
+      webFetchMode: state.settings.webFetchMode,
+      fallbackDeepSeek: state.settings.fallbackDeepSeek,
+      allowPrivateFetch: state.settings.allowPrivateFetch,
+    });
+
+    entry.status = 'ok';
+    entry.count = out.meta?.count ?? out.sources?.length ?? 0;
+    entry.meta = out.meta || null;
+    entry.provider = out.meta?.provider || 'deepseek';
+    entry.links = (out.sources || [])
+      .filter((source) => source?.url)
+      .slice(0, 6)
+      .map((source) => ({ title: source.title || source.url, url: source.url }));
+
+    addSources(run, out.sources);
+    renderToolPanel(run.el, run.toolEntries, {
+      open: false,
+      live: true,
+      sources: run.assistant.sources,
+    });
+    autoScroll(run);
+    return out;
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    entry.status = 'error';
+    entry.error = err?.message || String(err);
+    renderToolPanel(run.el, run.toolEntries, {
+      open: false,
+      live: true,
+      sources: run.assistant.sources,
+    });
+    autoScroll(run);
+    toast('自动搜索失败，已跳过检索结果');
+    return null;
+  }
+}
+
+function reuseAutoSearch(run, userMsg) {
+  const sources = Array.isArray(userMsg.searchSources) ? userMsg.searchSources : [];
+  if (!sources.length || !userMsg.searchContext) return false;
+
+  const entry = {
+    id: uid('tool'),
+    name: 'web_search',
+    args: {
+      query: userMsg.searchQuery || '',
+      count: sources.length,
+    },
+    status: 'ok',
+    count: sources.length,
+    links: sources
+      .filter((source) => source?.url)
+      .slice(0, 6)
+      .map((source) => ({ title: source.title || source.url, url: source.url })),
+    error: null,
+    meta: {
+      query: userMsg.searchQuery || '',
+      count: sources.length,
+      provider: 'deepseek',
+      reused: true,
+    },
+    provider: 'deepseek',
+    auto: true,
+    cached: true,
+  };
+
+  run.toolEntries.push(entry);
+  addSources(run, sources);
+  renderToolPanel(run.el, run.toolEntries, {
+    open: false,
+    live: true,
+    sources: run.assistant.sources,
+  });
+  autoScroll(run);
+  return true;
+}
+
+async function ensureAutoSearch(run, userMsg, originalQuestion) {
+  if (!userMsg) return;
+
+  const fresh =
+    userMsg.searchContext &&
+    Date.now() - (userMsg.searchContextAt || 0) < AUTO_SEARCH_TTL;
+  if (fresh && reuseAutoSearch(run, userMsg)) return;
+
+  const query = autoSearchQuery(originalQuestion, run.convo);
+  if (!query) return;
+
+  const out = await runAutoSearch(run, {
+    query,
+    count: state.settings.searchCount,
+    oriQuestion: originalQuestion,
+  });
+  if (!out?.sources?.length || !out.text) return;
+
+  userMsg.searchContext = out.text;
+  userMsg.searchContextAt = Date.now();
+  userMsg.searchSources = out.sources;
+  userMsg.searchQuery = query;
+}
+
 async function runToolCall(run, call, originalQuestion) {
   const name = call.function?.name || 'unknown';
   let args = {};
@@ -1594,7 +1782,10 @@ function getConversationSystemMessage(convo, settings) {
   return convo.systemMessage;
 }
 
-async function runAssistantTurn({ useTools: useToolsOverride = null } = {}) {
+async function runAssistantTurn({
+  useTools: useToolsOverride = null,
+  autoSearch = false,
+} = {}) {
   const convo = state.convo;
   const settings = state.settings;
   const useThinking = state.thinkingOn;
@@ -1663,18 +1854,27 @@ async function runAssistantTurn({ useTools: useToolsOverride = null } = {}) {
   }
 
   let tools = useTools ? buildToolDefinitions(settings.allowFetch) : null;
-  const apiMessages = buildApiMessages(
-    convo.messages.slice(0, -1),
-    settings,
-    systemMessage
-  );
-  const originalQuestion =
-    [...convo.messages].reverse().find((m) => m.role === 'user')?.content || '';
+  const lastUser = [...convo.messages].reverse().find((m) => m.role === 'user');
+  const originalQuestion = lastUser?.content || '';
 
   let error = null;
   let aborted = false;
+  let apiMessages = null;
 
   try {
+    // Chat mode: keyword-triggered search happens before the first model call,
+    // so it works even when the composer's web toggle is off. Messages mode
+    // uses its server-side web_search tool instead.
+    if (autoSearch) {
+      await ensureAutoSearch(run, lastUser, originalQuestion);
+    }
+
+    apiMessages = buildApiMessages(
+      convo.messages.slice(0, -1),
+      settings,
+      systemMessage
+    );
+
     for (let loop = 0; loop <= TOOL_LOOP_LIMIT; loop += 1) {
       run.current = { content: '', reasoning: '' };
       run.lastHadToolCalls = false;
@@ -1849,6 +2049,8 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
     error: entry.error,
     meta: entry.meta,
     provider: entry.provider,
+    auto: !!entry.auto,
+    cached: !!entry.cached,
   }));
 
   // Keep the final sub-turn separate from the combined display text. The
@@ -1999,11 +2201,12 @@ async function regenerate(assistantId) {
   state.convo.messages.splice(index);
   renderMessages();
   await persistConversation();
-  const useTools =
-    state.webOn ||
-    (state.settings.autoSearch !== false &&
-      messageWantsSearch(previousUser.content || '', state.convo));
-  await runAssistantTurn({ useTools });
+  const autoSearch =
+    !state.webOn &&
+    state.settings.autoSearch !== false &&
+    messageWantsSearch(previousUser.content || '', state.convo);
+  const useTools = state.webOn || autoSearch;
+  await runAssistantTurn({ useTools, autoSearch });
 }
 
 async function editUserMessage(messageId) {

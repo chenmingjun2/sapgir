@@ -60,15 +60,7 @@
 
 **当前状态：** 已移除所有 keyless 调用、伪装 OpenCode UA 和 Service Worker 搜索代理。2026-10-20 起插件只使用 DeepSeek Anthropic Messages 端点；联网由服务端原生 `web_search` 执行，客户端不再调用 DeepSeek Search/Fetch 原始 API，也不接入 Exa / Parallel / Tavily 或任何第三方搜索 provider。没有共享凭证、伪装头或 keyless 路径。
 
-**位置（历史记录，相关代码已删除）：**
-
-- `js/websearch.js`
-  - `const UA = 'opencode/2.0.27'`
-  - `X-Client-Name: opencode2`
-  - `X-Tavily-Access-Mode: keyless`
-  - `X-TinyFish-Access-Mode: keyless`
-- `js/webfetch.js`：`OpenCode-User/1.0` User-Agent
-- 设置页/README 宣传“keyless 可用”“OpenCode 随机”
+> 历史实现细节（`js/websearch.js`、`js/webfetch.js`、伪装 UA、keyless 头和多引擎轮换）已移到文末「历史附录」，当前代码不再包含这些文件。
 
 **风险：**
 
@@ -77,13 +69,6 @@
 - 使用 “OpenCode” 名称/身份做兼容描述可以，但**不能伪装成 OpenCode 客户端**。
 - 商业上最直接的风险：provider 封 IP/Key、API 变更导致功能不可用，或收到条款通知。
 
-**建议：**
-
-1. 删除所有 keyless 模式和伪装头；统一使用用户自己申请的 provider API Key。
-2. `random` 只从“已配置 Key 的 provider”中随机；没有 Key 就只保留 DeepSeek Search（走用户 DeepSeek Key）或禁用搜索。
-3. `webfetch` 使用本项目自己的 UA（例如 `Sapgir/1.0`）或普通浏览器 UA；不要冒充 OpenCode。
-4. README 删除“keyless 可直接用”的表述；增加各 provider 条款链接和“用户需自行遵守 provider 条款”。
-5. 如果希望保留零配置体验，优先使用 DeepSeek 官方 Search/Fetch（用户已有 DeepSeek Key），不要依赖第三方 keyless。
 
 ### 🟠 高：开源/商业发布前应处理
 
@@ -211,3 +196,24 @@ Reasonix 的做法是“**用 DeepSeek 名字做兼容性描述，但不用 Deep
 - [ ] 加 `PRIVACY.md` 和 Chrome Web Store 权限说明。
 - [ ] UI 仍与原聊天布局相近；如商业化，建议律师评估是否需要进一步差异化。
 - [ ] 正式商业发布前做律师复核。
+
+## 历史附录：已删除的 keyless / 多引擎实现（2026-10-18 审计）
+
+以下内容仅用于记录当时的审计发现，**当前仓库已不存在这些文件、请求头或配置**：
+
+- `js/websearch.js`
+  - `const UA = 'opencode/2.0.27'`
+  - `X-Client-Name: opencode2`
+  - `X-Tavily-Access-Mode: keyless`
+  - `X-TinyFish-Access-Mode: keyless`
+- `js/webfetch.js`：`OpenCode-User/1.0` User-Agent
+- 设置页/README 曾宣传“keyless 可用”“OpenCode 随机”
+- Chat 模式曾支持 DeepSeek Search 与 Exa / Parallel / Tavily 多引擎随机轮换
+
+当时的修正建议（均已在 2026-10-20 的 Anthropic-only 重构中落地）：
+
+1. 删除所有 keyless 模式和伪装头；不再共享凭证。
+2. 不再从第三方 provider 随机；联网统一走服务端原生 `web_search`。
+3. 删除本地 `webfetch`，不再由插件直接请求目标网页。
+4. README 删除“keyless 可直接用”的表述。
+5. 优先使用 DeepSeek 官方端点能力，不依赖第三方 keyless。

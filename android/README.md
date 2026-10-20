@@ -4,6 +4,7 @@ WebView 壳工程，把仓库根目录的 Chrome 扩展 UI 原样打包成 Andro
 
 - **只维护一份前端代码**：Gradle 任务 `syncWebAssets` 在构建时把根目录的 `app.html / js / styles / vendor / assets` 复制进 APK，仓库里没有第二份副本。
 - **系统 WebView**：使用设备自带的 Android System WebView（Chromium），随系统/Play 商店更新，不打入额外的浏览器内核。
+- **跟随系统主题**：读取 Android 的 `uiMode`，在设置「主题 = 跟随系统」时自动切换日间/夜间模式；显式选择浅色/深色时保持用户选择。
 - **版本号统一**：`versionName` 与 `versionCode` 都从根目录 `manifest.json` 的 `version` 派生，不用两处手改。
 
 ## 环境

@@ -62,7 +62,7 @@
 
 ## Android App
 
-`android/` 提供了基于系统 WebView 的 Android 壳，复用本仓库的前端代码（构建时自动同步，不维护第二份副本），无需 Android Studio。
+`android/` 提供了基于系统 WebView 的 Android 壳，复用本仓库的前端代码（构建时自动同步，不维护第二份副本），无需 Android Studio。主题设置为「跟随系统」时，Android 壳会读取系统日间/夜间模式并自动切换；显式选择浅色/深色时保持用户选择。
 
 ```bash
 export JAVA_HOME=~/android-toolchain/jdk
@@ -164,24 +164,35 @@ python3 -m http.server 8765
 # 打开 http://127.0.0.1:8765/app.html
 ```
 
-> 仓库不再附带旧 Chat Completions 端点的 Mock。联调请使用真实的 Anthropic Messages 端点，或在本地自行搭一个返回 SSE 的 Mock。
+运行测试（Node 18+，使用内置 `node:test`）：
+
+```bash
+npm test
+```
+
+测试覆盖 Anthropic SSE 解析、`web_search_tool_result` 来源提取、旧设置清理和导出不含 Key。
 
 ### 目录结构
 
 ```text
 .
 ├── manifest.json          # MV3 配置
+├── package.json           # 仅用于 node:test，无运行时依赖
 ├── background.js          # Service Worker：打开/聚焦标签页、右键菜单
 ├── app.html               # 聊天主页面
 ├── styles/app.css         # 全部样式（自绘 UI）
 ├── js/
-│   ├── app.js             # UI 状态、侧边栏、流式渲染、设置
+│   ├── app.js             # UI 状态、侧边栏、流式渲染、对话编排
 │   ├── api.js             # Base URL、模型列表、system message
 │   ├── anthropic.js       # Messages 客户端、原生 web_search、流式解析
+│   ├── settings-ui.js     # 设置表单、连接/搜索测试
+│   ├── attachments.js     # 图片压缩、文件读取、附件预览
+│   ├── tool-panel.js      # 搜索面板与参考来源渲染
 │   ├── http.js            # host / 超时 / 错误响应解析
 │   ├── storage.js         # chrome.storage.local
 │   ├── markdown.js        # Markdown、代码高亮、引用、KaTeX
 │   └── icons.js           # 内联图标
+├── test/                  # node:test 单测
 ├── vendor/                # marked / DOMPurify / highlight.js / KaTeX
 ├── assets/                # 原创图标
 ├── screenshots/           # README 截图

@@ -183,6 +183,28 @@
     themeMedia = null;
   }
 
+  // The native shell can be authoritative: WebView's prefers-color-scheme
+  // does not always refresh when the activity handles uiMode itself.
+  var nativeThemeBridge = null;
+  try {
+    nativeThemeBridge = window.SapgirAndroid &&
+      typeof window.SapgirAndroid.isSystemDark === 'function'
+      ? window.SapgirAndroid
+      : null;
+  } catch (_) {
+    nativeThemeBridge = null;
+  }
+
+  if (nativeThemeBridge) {
+    try {
+      window.__sapgirSystemDark = !!nativeThemeBridge.isSystemDark();
+    } catch (_) {
+      /* bridge unavailable */
+    }
+  } else if (themeMedia) {
+    window.__sapgirSystemDark = !!themeMedia.matches;
+  }
+
   function notifyTheme() {
     var bridge = window.SapgirAndroid;
     if (!bridge || typeof bridge.setTheme !== 'function') return;
@@ -195,6 +217,19 @@
     }
   }
 
+  // Called from MainActivity.onConfigurationChanged / onPageFinished.
+  window.__sapgirSetSystemTheme = function (dark) {
+    window.__sapgirSystemDark = !!dark;
+    try {
+      window.dispatchEvent(new CustomEvent('sapgir:system-theme', {
+        detail: { dark: !!dark },
+      }));
+    } catch (_) {
+      /* CustomEvent unavailable */
+    }
+    notifyTheme();
+  };
+
   try {
     new MutationObserver(notifyTheme).observe(document.documentElement, {
       attributes: true,
@@ -205,7 +240,13 @@
   }
 
   if (themeMedia) {
-    var onSystemThemeChange = function () { setTimeout(notifyTheme, 0); };
+    var onSystemThemeChange = function () {
+      if (!nativeThemeBridge) {
+        window.__sapgirSetSystemTheme(!!themeMedia.matches);
+      } else {
+        setTimeout(notifyTheme, 0);
+      }
+    };
     if (typeof themeMedia.addEventListener === 'function') {
       themeMedia.addEventListener('change', onSystemThemeChange);
     } else if (typeof themeMedia.addListener === 'function') {

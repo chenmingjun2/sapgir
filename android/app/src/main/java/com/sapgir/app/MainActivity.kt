@@ -159,6 +159,14 @@ class MainActivity : ComponentActivity() {
                 if (request.url.host == APP_HOST) return false
                 return openExternal(request.url)
             }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                // The shim reads the bridge on boot, but a reload or a missed
+                // configuration change can leave it stale; push the current
+                // system mode once the page is ready.
+                notifyWebTheme(systemIsDark())
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -198,6 +206,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        notifyWebTheme(systemIsDark())
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -211,6 +220,7 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightStatusBars = !dark
             isAppearanceLightNavigationBars = !dark
         }
+        notifyWebTheme(dark)
     }
 
     override fun onDestroy() {
@@ -320,11 +330,38 @@ class MainActivity : ComponentActivity() {
         runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     }
 
+    private fun systemIsDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    /**
+     * Push the current system day/night mode into the page. The page only
+     * applies it when the user's theme setting is "auto"; explicit light/dark
+     * choices keep priority.
+     */
+    private fun notifyWebTheme(dark: Boolean) {
+        webView.evaluateJavascript(
+            "window.__sapgirSetSystemTheme && window.__sapgirSetSystemTheme($dark);",
+            null,
+        )
+    }
+
     /**
      * Export bridge: `<a download>` + blob URLs do not work in WebView, so the
      * page hands exported Markdown/JSON over to MediaStore instead.
      */
     inner class Bridge {
+        /**
+         * Read by sapgir-shim.js on boot so the first render already uses the
+         * system day/night mode.
+         */
+        @JavascriptInterface
+        fun isSystemDark(): Boolean = try {
+            systemIsDark()
+        } catch (_: Exception) {
+            false
+        }
+
         /**
          * Called by sapgir-shim.js whenever the page theme changes. The app
          * theme is independent from the system uiMode, so status/navigation

@@ -23,30 +23,25 @@ import {
   storageStats,
 } from './storage.js';
 
-import {
-  listModels,
-  buildSessionSystemMessage,
-  normalizeBase,
-} from './api.js';
+import { buildSessionSystemMessage } from './api.js';
 
 import { renderMarkdown, copyText } from './markdown.js';
-import { messagesSearch, buildAnthropicMessages, streamAnthropicTurn } from './anthropic.js';
+import { buildAnthropicMessages, streamAnthropicTurn } from './anthropic.js';
 import { hostOf } from './http.js';
+import { addFiles, initAttachments, renderAttachments } from './attachments.js';
+import {
+  initSettingsUi,
+  populateSettingsForm,
+  saveSettingsFromForm,
+  testConnection,
+  testWebSearch,
+} from './settings-ui.js';
+import { renderSources, renderToolPanel } from './tool-panel.js';
 import { icon, brandMark } from './icons.js';
 
 /* ------------------------------------------------------------------ */
 /* Constants & state                                                  */
 /* ------------------------------------------------------------------ */
-
-const MAX_ATTACHMENTS = 6;
-const MAX_IMAGE_DIM = 1600;
-const MAX_TEXT_CHARS = 150000;
-
-const TEXT_EXTENSIONS = [
-  'txt', 'md', 'markdown', 'csv', 'json', 'log', 'yaml', 'yml', 'xml', 'html',
-  'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'go', 'java', 'c', 'cpp', 'h', 'rs',
-  'sql', 'sh', 'toml', 'ini', 'env', 'gitignore',
-];
 
 const state = {
   settings: null,
@@ -79,18 +74,6 @@ function $(id) {
 
 function uid(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function clampInt(value, min, max, fallback) {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
-function clampFloat(value, min, max, fallback) {
-  const n = Number.parseFloat(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
 }
 
 function formatNumber(n) {
@@ -151,21 +134,6 @@ function makeTitle(text, hasImages = false) {
     .trim();
   if (!cleaned) return hasImages ? '图片对话' : '新对话';
   return cleaned.length > 32 ? `${cleaned.slice(0, 32)}…` : cleaned;
-}
-
-function safeHttpUrl(url) {
-  return /^https?:\/\//i.test(String(url || '')) ? String(url) : '';
-}
-
-function sanitizeBaseUrl(value) {
-  const base = normalizeBase(value);
-  try {
-    const url = new URL(base);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return base;
-  } catch (_) {
-    return null;
-  }
 }
 
 function setToggle(el, on) {
@@ -324,6 +292,9 @@ function hydrateIcons() {
 /* ------------------------------------------------------------------ */
 
 function systemTheme() {
+  if (typeof window.__sapgirSystemDark === 'boolean') {
+    return window.__sapgirSystemDark ? 'dark' : 'light';
+  }
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
@@ -862,199 +833,6 @@ function showError(el, message, { retry = true } = {}) {
   retryBtn.classList.toggle('hidden', !retry);
 }
 
-function hideError(el) {
-  el.querySelector('.error-box')?.classList.add('hidden');
-}
-
-function renderSources(el, sources) {
-  const box = el.querySelector('.sources');
-  if (!box) return;
-  const valid = (sources || []).filter((s) => s && safeHttpUrl(s.url));
-  if (!valid.length) {
-    box.classList.add('hidden');
-    box.classList.remove('open');
-    return;
-  }
-
-  const wasOpen = box.classList.contains('open');
-  box.classList.remove('hidden');
-  box.innerHTML = '';
-
-  const head = document.createElement('button');
-  head.type = 'button';
-  head.className = 'sources-head';
-  head.setAttribute('aria-expanded', wasOpen ? 'true' : 'false');
-  head.innerHTML = `<span class="sources-icon">${icon('link', 13)}</span><span class="sources-title">参考来源 · ${valid.length}</span><span class="sources-chev">${icon('chevronDown', 14)}</span>`;
-
-  const body = document.createElement('div');
-  body.className = 'sources-body';
-  const list = document.createElement('div');
-  list.className = 'sources-list';
-
-  valid.forEach((source, index) => {
-    const a = document.createElement('a');
-    a.className = 'source';
-    a.href = source.url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.title = source.title || source.url;
-
-    const idx = document.createElement('span');
-    idx.className = 'source-idx';
-    idx.textContent = String(index + 1);
-
-    const text = document.createElement('span');
-    text.className = 'source-text';
-    const name = document.createElement('span');
-    name.className = 'source-title';
-    name.textContent = source.title || source.url;
-    const site = document.createElement('span');
-    site.className = 'source-site';
-    let host = source.site || '';
-    if (!host) {
-      try {
-        host = new URL(source.url).hostname;
-      } catch (_) {
-        host = '';
-      }
-    }
-    site.textContent = host || source.url;
-    text.append(name, site);
-
-    a.append(idx, text);
-    list.appendChild(a);
-  });
-
-  body.appendChild(list);
-  box.append(head, body);
-  box.classList.toggle('open', wasOpen);
-}
-
-function toolNameLabel(name) {
-  return name === 'web_search' ? '联网搜索' : name || '工具';
-}
-
-function renderToolPanel(el, entries, { open = false, sources = [] } = {}) {
-  const panel = el.querySelector('.tool-panel');
-  if (!panel) return;
-  const wasOpen = panel.classList.contains('open');
-  const list = (entries || []).filter(Boolean);
-  if (!list.length) {
-    panel.classList.add('hidden');
-    panel.classList.remove('open');
-    return;
-  }
-  panel.classList.remove('hidden');
-
-  const searches = list.filter((e) => e.name === 'web_search');
-  const running = list.some((e) => e.status === 'running');
-  const pageCount = new Set((sources || []).map((s) => s.url).filter(Boolean)).size;
-
-  let summary;
-  if (running) {
-    summary = '正在使用服务端搜索…';
-  } else {
-    const bits = [];
-    if (searches.length) bits.push(`${searches.length} 次搜索`);
-    if (pageCount) bits.push(`${pageCount} 个来源`);
-    summary = bits.length ? bits.join(' · ') : '联网工具';
-  }
-
-  const head = `
-    <button class="tool-head" type="button" aria-expanded="${open ? 'true' : 'false'}">
-      ${running ? '<span class="spinner"></span>' : `<span class="tool-icon">${icon('globe', 14)}</span>`}
-      <span class="tool-summary"></span>
-      <span class="tool-chev">${icon('chevronDown', 14)}</span>
-    </button>
-    <div class="tool-body"></div>`;
-
-  panel.innerHTML = head;
-  panel.querySelector('.tool-summary').textContent = summary;
-
-  const body = panel.querySelector('.tool-body');
-
-  for (const entry of list) {
-    const row = document.createElement('div');
-    row.className = 'tool-row';
-
-    if (entry.status === 'running') {
-      const spinner = document.createElement('span');
-      spinner.className = 'spinner';
-      row.appendChild(spinner);
-    } else if (entry.status === 'error') {
-      const status = document.createElement('span');
-      status.className = 'tool-status-err';
-      status.innerHTML = icon('alert', 14);
-      row.appendChild(status);
-    } else {
-      const status = document.createElement('span');
-      status.className = 'tool-status-ok';
-      status.innerHTML = icon('check', 14);
-      row.appendChild(status);
-    }
-
-    const text = document.createElement('div');
-    text.className = 'tool-text';
-
-    const headLine = document.createElement('div');
-    const label = document.createElement('span');
-    label.className = 'q';
-    if (entry.name === 'web_search') {
-      label.textContent = `搜索：${entry.args?.query || ''}`;
-    } else {
-      label.textContent = toolNameLabel(entry.name);
-    }
-    headLine.appendChild(label);
-
-    if (entry.provider) {
-      const provider = document.createElement('span');
-      provider.className = 'badge provider-badge';
-      provider.textContent = entry.provider === 'messages' ? '服务端搜索' : entry.provider;
-      headLine.appendChild(document.createTextNode(' '));
-      headLine.appendChild(provider);
-    }
-
-    if (entry.status === 'ok' && entry.name === 'web_search') {
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = `${entry.count ?? 0} 条`;
-      headLine.appendChild(document.createTextNode(' '));
-      headLine.appendChild(badge);
-    }
-    text.appendChild(headLine);
-
-    if (entry.error) {
-      const err = document.createElement('div');
-      err.textContent = entry.error;
-      text.appendChild(err);
-    }
-
-    if (entry.links?.length) {
-      const links = document.createElement('div');
-      links.className = 'tool-links';
-      for (const link of entry.links.slice(0, 5)) {
-        const url = safeHttpUrl(link.url);
-        if (!url) continue;
-        const a = document.createElement('a');
-        a.href = url;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        a.textContent = link.title || url;
-        a.title = link.title || url;
-        links.appendChild(a);
-      }
-      if (links.childNodes.length) text.appendChild(links);
-    }
-
-    row.appendChild(text);
-    body.appendChild(row);
-  }
-
-  const shouldOpen = !!open || wasOpen;
-  panel.classList.toggle('open', shouldOpen);
-  panel.querySelector('.tool-head').setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
-}
-
 /* ------------------------------------------------------------------ */
 /* Request / streaming                                                */
 /* ------------------------------------------------------------------ */
@@ -1373,48 +1151,6 @@ function completeAnthropicToolUse(run, data) {
   finishToolEntry(run, entry, { sources, meta });
 }
 
-async function runAnthropicAssistantTurn(run, { systemMessage, useThinking }) {
-  const settings = state.settings;
-  let error = null;
-  let aborted = false;
-
-  try {
-    const messages = buildAnthropicMessages(run.convo.messages.slice(0, -1));
-    await streamAnthropicTurn({
-      baseUrl: settings.baseUrl,
-      apiKey: settings.apiKey,
-      model: settings.model,
-      system: systemMessage,
-      messages,
-      thinking: useThinking,
-      effort: settings.thinkingEffort,
-      maxTokens: settings.maxTokens,
-      temperature: settings.temperature,
-      searchCount: settings.searchCount,
-      signal: run.controller.signal,
-      onText: (text) => handleDelta(run, { content: text }),
-      onReasoning: (text) => handleDelta(run, { reasoning: text }),
-      onToolUse: (tool) => addAnthropicToolUse(run, tool),
-      onToolResult: (data) => completeAnthropicToolUse(run, data),
-      onUsage: (usage) => {
-        const mapped = mapAnthropicUsage(usage);
-        if (mapped) run.usage = mapped;
-      },
-      onFinish: ({ stopReason }) => {
-        run.finishReason = stopReason === 'max_tokens' ? 'length' : stopReason || '';
-      },
-    });
-  } catch (err) {
-    if (err?.name === 'AbortError') {
-      aborted = true;
-    } else {
-      error = err;
-    }
-  } finally {
-    await finishTurn(run, { aborted, error });
-  }
-}
-
 function getConversationSystemMessage(convo, settings) {
   const now = new Date();
   const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
@@ -1484,7 +1220,44 @@ async function runAssistantTurn() {
   requestAnimationFrame(() => scrollToBottom(true, true));
 
   const systemMessage = getConversationSystemMessage(convo, settings);
-  await runAnthropicAssistantTurn(run, { systemMessage, useThinking });
+  let error = null;
+  let aborted = false;
+
+  try {
+    const messages = buildAnthropicMessages(convo.messages.slice(0, -1));
+    await streamAnthropicTurn({
+      baseUrl: settings.baseUrl,
+      apiKey: settings.apiKey,
+      model: settings.model,
+      system: systemMessage,
+      messages,
+      thinking: useThinking,
+      effort: settings.thinkingEffort,
+      maxTokens: settings.maxTokens,
+      temperature: settings.temperature,
+      searchCount: settings.searchCount,
+      signal: controller.signal,
+      onText: (text) => handleDelta(run, { content: text }),
+      onReasoning: (text) => handleDelta(run, { reasoning: text }),
+      onToolUse: (tool) => addAnthropicToolUse(run, tool),
+      onToolResult: (data) => completeAnthropicToolUse(run, data),
+      onUsage: (usage) => {
+        const mapped = mapAnthropicUsage(usage);
+        if (mapped) run.usage = mapped;
+      },
+      onFinish: ({ stopReason }) => {
+        run.finishReason = stopReason === 'max_tokens' ? 'length' : stopReason || '';
+      },
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      aborted = true;
+    } else {
+      error = err;
+    }
+  } finally {
+    await finishTurn(run, { aborted, error });
+  }
 }
 
 async function finishTurn(run, { aborted = false, error = null } = {}) {
@@ -1693,168 +1466,6 @@ async function editUserMessage(messageId) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Attachments                                                        */
-/* ------------------------------------------------------------------ */
-
-function attachKind(file) {
-  if (/^image\/(jpeg|png|gif|webp)$/i.test(file.type)) return 'image';
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (file.type.startsWith('text/') || TEXT_EXTENSIONS.includes(ext)) return 'text';
-  return 'unsupported';
-}
-
-function readAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('图片解析失败'));
-    img.src = src;
-  });
-}
-
-async function compressImage(file) {
-  if (file.size > 24 * 1024 * 1024) {
-    throw new Error('图片超过 24MB，请先压缩');
-  }
-  const original = await readAsDataURL(file);
-  const img = await loadImage(original);
-  const width = img.naturalWidth;
-  const height = img.naturalHeight;
-  const scale = Math.min(1, MAX_IMAGE_DIM / Math.max(width, height));
-
-  if (scale === 1 && file.size <= 700 * 1024 && file.type !== 'image/gif') {
-    return { dataUrl: original, width, height, size: file.size };
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  let dataUrl = canvas.toDataURL('image/webp', 0.86);
-  if (!dataUrl.startsWith('data:image/webp')) {
-    dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-  }
-  return {
-    dataUrl,
-    width: canvas.width,
-    height: canvas.height,
-    size: Math.round((dataUrl.length * 3) / 4),
-  };
-}
-
-async function addFiles(fileList) {
-  const files = [...fileList];
-  if (!files.length) return;
-
-  for (const file of files) {
-    if (state.attachments.length >= MAX_ATTACHMENTS) {
-      toast(`最多添加 ${MAX_ATTACHMENTS} 个附件`);
-      break;
-    }
-    const kind = attachKind(file);
-    try {
-      if (kind === 'image') {
-        const compressed = await compressImage(file);
-        state.attachments.push({
-          id: uid('img'),
-          type: 'image',
-          name: file.name || '图片',
-          dataUrl: compressed.dataUrl,
-          width: compressed.width,
-          height: compressed.height,
-          size: compressed.size,
-        });
-      } else if (kind === 'text') {
-        if (file.size > 2 * 1024 * 1024) {
-          toast(`「${file.name}」超过 2MB，已跳过`);
-          continue;
-        }
-        let text = await file.text();
-        if (!text.trim()) {
-          toast(`「${file.name}」是空文件，已跳过`);
-          continue;
-        }
-        if (text.length > MAX_TEXT_CHARS) {
-          text = `${text.slice(0, MAX_TEXT_CHARS)}\n…（文件过长，已截断）`;
-        }
-        state.attachments.push({
-          id: uid('file'),
-          type: 'text',
-          name: file.name || '文本文件',
-          text,
-          size: file.size,
-        });
-      } else {
-        toast(`暂不支持「${file.name}」。目前支持图片和常见文本文件。`);
-      }
-    } catch (err) {
-      toast(`处理「${file.name}」失败：${err.message}`);
-    }
-  }
-
-  renderAttachments();
-  updateSendButton();
-  dom.composer.focus();
-}
-
-function renderAttachments() {
-  dom.attachments.innerHTML = '';
-  if (!state.attachments.length) {
-    dom.attachments.classList.add('hidden');
-    updateSendButton();
-    updateScrollBottomPosition();
-    return;
-  }
-  dom.attachments.classList.remove('hidden');
-
-  for (const item of state.attachments) {
-    const el = document.createElement('div');
-    el.className = `attachment ${item.type === 'text' ? 'file' : ''}`;
-    el.dataset.id = item.id;
-
-    if (item.type === 'image') {
-      const img = document.createElement('img');
-      img.src = item.dataUrl;
-      img.alt = item.name;
-      img.dataset.zoom = '1';
-      img.title = `${item.name} · ${item.width}×${item.height}`;
-      el.appendChild(img);
-    } else {
-      el.innerHTML = `${icon('file', 15)}<span class="att-name"></span>`;
-      el.querySelector('.att-name').textContent = item.name;
-      el.title = item.name;
-    }
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'remove';
-    remove.setAttribute('aria-label', '移除附件');
-    remove.innerHTML = icon('x', 11);
-    remove.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.attachments = state.attachments.filter((a) => a.id !== item.id);
-      renderAttachments();
-    });
-    el.appendChild(remove);
-    dom.attachments.appendChild(el);
-  }
-  updateSendButton();
-  updateScrollBottomPosition();
-}
-
-/* ------------------------------------------------------------------ */
 /* Composer / menus                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -2011,31 +1622,6 @@ function showSettingsTab(tab) {
   if (tab === 'data') refreshStats();
 }
 
-function populateSettingsForm() {
-  const s = state.settings;
-  dom.setApiKey.value = s.apiKey || '';
-  dom.setApiKey.type = 'password';
-  dom.toggleKey.textContent = '显示';
-  state.keyVisible = false;
-  dom.setBaseUrl.value = s.baseUrl || DEFAULT_SETTINGS.baseUrl;
-  dom.setModel.value = s.model || DEFAULT_SETTINGS.model;
-  dom.setEffort.value = s.thinkingEffort || 'high';
-  dom.setMaxTokens.value = String(s.maxTokens ?? DEFAULT_SETTINGS.maxTokens);
-  dom.setSystemPrompt.value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  dom.setThinking.checked = !!s.thinking;
-  dom.setFoldThinking.checked = s.foldThinking !== false;
-  dom.setIncludeUsage.checked = s.includeUsage !== false;
-  dom.setSendOnEnter.checked = s.sendOnEnter !== false;
-  dom.setSearchCount.value = String(s.searchCount ?? 5);
-  dom.setTemperature.value = String(s.temperature ?? 1);
-  dom.setTheme.value = s.theme || 'auto';
-  dom.setFontSize.value = String(s.fontSize || 16);
-  dom.testResult.textContent = '';
-  dom.testResult.className = 'test-result';
-  dom.testSearchResult.textContent = '';
-  dom.testSearchResult.className = 'test-result';
-}
-
 function openSettings(tab = 'api') {
   closeModelMenu();
   populateSettingsForm();
@@ -2043,125 +1629,6 @@ function openSettings(tab = 'api') {
   dom.settingsDialog.showModal();
   if (tab === 'api') {
     setTimeout(() => dom.setApiKey.focus(), 40);
-  }
-}
-
-async function saveSettingsFromForm() {
-  const next = { ...state.settings };
-  const baseUrl = sanitizeBaseUrl(dom.setBaseUrl.value);
-  if (!baseUrl) {
-    toast('Base URL 无效，请填写 http(s) 地址');
-    dom.setBaseUrl.focus();
-    return;
-  }
-  next.apiKey = dom.setApiKey.value.trim();
-  next.baseUrl = baseUrl;
-  next.model = dom.setModel.value.trim() || DEFAULT_SETTINGS.model;
-  next.thinkingEffort = dom.setEffort.value;
-  next.maxTokens = clampInt(dom.setMaxTokens.value, 0, 393216, DEFAULT_SETTINGS.maxTokens);
-  next.systemPrompt = dom.setSystemPrompt.value.trim() || DEFAULT_SYSTEM_PROMPT;
-  next.thinking = dom.setThinking.checked;
-  next.foldThinking = dom.setFoldThinking.checked;
-  next.includeUsage = dom.setIncludeUsage.checked;
-  next.sendOnEnter = dom.setSendOnEnter.checked;
-  next.searchCount = clampInt(dom.setSearchCount.value, 2, 8, 5);
-  next.temperature = clampFloat(dom.setTemperature.value, 0, 2, 1);
-  next.theme = dom.setTheme.value;
-  next.fontSize = Number(dom.setFontSize.value) || 16;
-
-  try {
-    state.settings = await saveSettings(next);
-  } catch (err) {
-    toast(`保存设置失败：${err.message}`);
-    return;
-  }
-  if (!state.convo) {
-    state.thinkingOn = state.settings.thinking;
-  }
-
-  applyTheme();
-  applyFontSize();
-  updateModelUI();
-  updateApiNotice();
-  updateToggles();
-  setStreamingUI(!!state.streaming);
-  dom.settingsDialog.close();
-  setTimeout(() => {
-    updateScrollBottomPosition();
-    updateScrollState();
-  }, 80);
-  toast('设置已保存');
-}
-
-async function testConnection() {
-  const baseUrl = sanitizeBaseUrl(dom.setBaseUrl.value);
-  const apiKey = dom.setApiKey.value.trim();
-  if (!baseUrl) {
-    dom.testResult.textContent = 'Base URL 无效，请填写 http(s) 地址';
-    dom.testResult.className = 'test-result err';
-    return;
-  }
-  if (!apiKey) {
-    dom.testResult.textContent = '请先填写 API Key';
-    dom.testResult.className = 'test-result err';
-    return;
-  }
-
-  dom.testConnection.disabled = true;
-  dom.testResult.textContent = '正在连接…';
-  dom.testResult.className = 'test-result';
-  try {
-    const models = await listModels({ baseUrl, apiKey });
-    state.modelList = models;
-    if (models.length) {
-      dom.modelPresets.innerHTML = '';
-      for (const id of models) {
-        const option = document.createElement('option');
-        option.value = id;
-        dom.modelPresets.appendChild(option);
-      }
-    }
-    const chosen = dom.setModel.value.trim();
-    const hasChosen = models.length === 0 || models.includes(chosen);
-    dom.testResult.textContent = models.length
-      ? `连接成功，可用模型：${models.slice(0, 6).join('、')}${models.length > 6 ? '…' : ''}${hasChosen ? '' : '（当前模型不在列表中）'}`
-      : '连接成功，但 /models 没有返回模型列表。';
-    dom.testResult.className = 'test-result ok';
-  } catch (err) {
-    dom.testResult.textContent = err.message;
-    dom.testResult.className = 'test-result err';
-  } finally {
-    dom.testConnection.disabled = false;
-  }
-}
-
-async function testWebSearch() {
-  const baseUrl = sanitizeBaseUrl(dom.setBaseUrl.value) || state.settings.baseUrl;
-  const apiKey = dom.setApiKey.value.trim();
-  const model = dom.setModel.value.trim() || state.settings.model;
-  const query = 'DeepSeek 最新公告';
-
-  dom.testSearch.disabled = true;
-  dom.testSearchResult.textContent = '正在搜索…';
-  dom.testSearchResult.className = 'test-result';
-
-  try {
-    const out = await messagesSearch({
-      baseUrl,
-      apiKey,
-      model,
-      query,
-      count: 3,
-    });
-    dom.testSearchResult.textContent = `服务端搜索 · ${out.sources.length} 个来源 · ${
-      out.sources[0]?.title || '无结果'
-    }`;
-    dom.testSearchResult.className = 'test-result ok';
-  } catch (err) {
-    dom.testSearchResult.textContent = err.message;
-    dom.testSearchResult.className = 'test-result err';
-  } finally {
-    dom.testSearch.disabled = false;
   }
 }
 
@@ -2719,6 +2186,10 @@ function bindEvents() {
       if (state.settings?.theme === 'auto' && !dom.settingsDialog.open) applyTheme();
     });
 
+  window.addEventListener('sapgir:system-theme', () => {
+    if (state.settings?.theme === 'auto' && !dom.settingsDialog.open) applyTheme();
+  });
+
   window.addEventListener('beforeunload', () => {
     if (state.streaming) {
       try {
@@ -2786,6 +2257,27 @@ async function init() {
   cacheDom();
   hydrateIcons();
   applyAppVersion();
+  initAttachments({
+    state,
+    dom,
+    toast,
+    uid,
+    updateSendButton,
+    updateScrollBottomPosition,
+  });
+  initSettingsUi({
+    state,
+    dom,
+    toast,
+    applyTheme,
+    applyFontSize,
+    updateModelUI,
+    updateApiNotice,
+    updateToggles,
+    setStreamingUI,
+    updateScrollBottomPosition,
+    updateScrollState,
+  });
 
   state.settings = await loadSettings();
   state.index = await loadIndex();

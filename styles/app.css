@@ -1643,7 +1643,6 @@ a:hover {
 }
 
 .msg:hover .msg-actions button,
-.msg.show-actions .msg-actions button,
 .msg-actions button:focus-visible {
   opacity: 1;
 }

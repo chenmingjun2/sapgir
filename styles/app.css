@@ -2798,8 +2798,7 @@ dialog.modal::backdrop {
 }
 
 @media (max-width: 460px) {
-  #thinking-toggle > span:last-child,
-  #search-toggle > span:last-child {
+  #thinking-toggle > span:last-child {
     display: none;
   }
 

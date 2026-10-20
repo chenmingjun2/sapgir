@@ -321,8 +321,4 @@ export function renderMarkdown(text, opts = {}) {
   return container.innerHTML;
 }
 
-export function escapeText(text) {
-  return escapeHtml(text);
-}
-
 export { copyText };

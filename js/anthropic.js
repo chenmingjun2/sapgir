@@ -1,10 +1,11 @@
 /**
- * DeepSeek Messages-compatible whole-turn client. It uses the DeepSeek
+ * DeepSeek Messages-compatible client. It uses the
  * /anthropic/v1/messages endpoint and the native server-side web_search tool,
- * so the whole answer comes from that endpoint.
+ * so search, fetching and answer generation all happen on the server.
  */
 
-import { messagesEndpoint } from './websearch.js';
+import { messagesEndpoint } from './api.js';
+import { hostOf, readErrorBody } from './http.js';
 
 function textWithFiles(msg) {
   let text = msg.content || '';
@@ -67,14 +68,7 @@ export function buildAnthropicMessages(messages) {
   return out;
 }
 
-function anthropicError(status, body) {
-  let message = '';
-  try {
-    const data = JSON.parse(body);
-    message = data?.error?.message || data?.message || '';
-  } catch (_) {
-    message = String(body || '').slice(0, 300);
-  }
+function anthropicError(status, message) {
   if (status === 401) return 'API Key 无效或已过期';
   if (status === 402) return '账户余额不足';
   if (status === 429) return '请求过于频繁或达到速率限制';
@@ -123,6 +117,8 @@ function handleBlockDelta(delta, callbacks) {
 
 /**
  * Stream one Messages-compatible turn. Returns {stopReason, usage}.
+ * The server-side web_search tool is always declared; the model decides
+ * whether to use it.
  */
 export async function streamAnthropicTurn({
   baseUrl,
@@ -133,7 +129,7 @@ export async function streamAnthropicTurn({
   thinking = true,
   effort = 'high',
   maxTokens = 8192,
-  tools = false,
+  temperature = 1,
   searchCount = 5,
   signal,
   onText,
@@ -152,18 +148,17 @@ export async function streamAnthropicTurn({
     messages,
     stream: true,
     thinking: { type: thinking ? 'enabled' : 'disabled' },
-  };
-  if (system) body.system = system;
-  if (thinking && effort) body.output_config = { effort };
-  if (tools) {
-    body.tools = [
+    tools: [
       {
         type: 'web_search_20250305',
         name: 'web_search',
         max_uses: Math.max(2, Math.min(8, Number(searchCount) || 5)),
       },
-    ];
-  }
+    ],
+  };
+  if (system) body.system = system;
+  if (thinking && effort) body.output_config = { effort };
+  if (!thinking && Number.isFinite(temperature)) body.temperature = temperature;
 
   let res;
   try {
@@ -183,8 +178,7 @@ export async function streamAnthropicTurn({
   }
 
   if (!res.ok) {
-    const errorBody = await res.text().catch(() => '');
-    throw new Error(anthropicError(res.status, errorBody));
+    throw new Error(anthropicError(res.status, await readErrorBody(res)));
   }
 
   const contentType = res.headers.get('content-type') || '';
@@ -195,7 +189,7 @@ export async function streamAnthropicTurn({
     if (data?.type === 'error' || data?.error) {
       throw new Error(data.error?.message || 'Messages 端点返回错误');
     }
-    let usage = usageFrom(data);
+    const usage = usageFrom(data);
     for (const block of data.content || []) {
       handleBlockStart(block, { onText, onReasoning, onToolUse, onToolResult });
     }
@@ -324,10 +318,76 @@ export async function streamAnthropicTurn({
   const finalStop = stopReason || 'end_turn';
   onFinish?.({ stopReason: finalStop, usage });
   if (finalStop === 'tool_use' || finalStop === 'pause_turn') {
-    // There are no client-side tools in this mode. A tool_use/pause_turn
-    // here means the endpoint stopped before producing a final answer; make
-    // it a retryable error instead of silently showing a preamble.
+    // Search runs server-side; a tool_use/pause_turn here means the endpoint
+    // stopped before producing a final answer. Make it retryable.
     throw new Error('Messages 端点返回了未完成的工具调用，请重试。');
   }
   return { stopReason: finalStop, usage };
+}
+
+/**
+ * One-shot server-side search used by the settings "test search" button.
+ */
+export async function messagesSearch({
+  baseUrl,
+  apiKey,
+  model = 'deepseek-flash',
+  query,
+  count = 5,
+  signal,
+} = {}) {
+  const textQuery = String(query || '').trim();
+  if (!textQuery) throw new Error('搜索关键词为空');
+  if (!apiKey) throw new Error('缺少 API Key，无法测试服务端搜索');
+
+  const sources = [];
+  const seen = new Set();
+  let answer = '';
+  let toolUses = 0;
+
+  await streamAnthropicTurn({
+    baseUrl,
+    apiKey,
+    model,
+    system:
+      '你是搜索助手。请调用 web_search 搜索用户问题，然后用中文给出简洁的要点总结。不要编造，不要重复大段原文。',
+    messages: [
+      {
+        role: 'user',
+        content: `请使用 web_search 搜索下面的问题，并给出简洁的要点总结：\n\n${textQuery}`,
+      },
+    ],
+    maxTokens: 1200,
+    thinking: false,
+    searchCount: count,
+    signal,
+    onText: (text) => {
+      answer += text;
+    },
+    onToolUse: () => {
+      toolUses += 1;
+    },
+    onToolResult: ({ results }) => {
+      for (const result of results || []) {
+        if (result?.type !== 'web_search_result' || !result.url || seen.has(result.url)) {
+          continue;
+        }
+        seen.add(result.url);
+        sources.push({
+          title: result.title || result.url,
+          url: result.url,
+          site: hostOf(result.url),
+          date: result.page_age || '',
+          snippet: '',
+          summary: '',
+        });
+      }
+    },
+  });
+
+  if (!toolUses && !sources.length) throw new Error('Messages 端点没有执行 web_search');
+  if (!sources.length && !answer.trim()) {
+    throw new Error('Messages 端点搜索没有返回可用结果');
+  }
+  return { provider: 'messages', query: textQuery, sources };
 }

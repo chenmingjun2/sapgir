@@ -24,19 +24,14 @@ import {
 } from './storage.js';
 
 import {
-  streamChat,
   listModels,
-  executeTool,
-  buildApiMessages,
   buildSessionSystemMessage,
-  buildToolDefinitions,
-  parseRawToolCalls,
   normalizeBase,
 } from './api.js';
 
 import { renderMarkdown, copyText } from './markdown.js';
-import { messagesSearch, providerLabel } from './websearch.js';
-import { buildAnthropicMessages, streamAnthropicTurn } from './anthropic.js';
+import { messagesSearch, buildAnthropicMessages, streamAnthropicTurn } from './anthropic.js';
+import { hostOf } from './http.js';
 import { icon, brandMark } from './icons.js';
 
 /* ------------------------------------------------------------------ */
@@ -46,10 +41,6 @@ import { icon, brandMark } from './icons.js';
 const MAX_ATTACHMENTS = 6;
 const MAX_IMAGE_DIM = 1600;
 const MAX_TEXT_CHARS = 150000;
-const TOOL_LOOP_LIMIT = 6;
-// Reuse a keyword-triggered search for regenerations within this window instead
-// of paying for the same query again.
-const AUTO_SEARCH_TTL = 10 * 60 * 1000;
 
 const TEXT_EXTENSIONS = [
   'txt', 'md', 'markdown', 'csv', 'json', 'log', 'yaml', 'yml', 'xml', 'html',
@@ -65,7 +56,6 @@ const state = {
   attachments: [],
   streaming: null,
   thinkingOn: true,
-  webOn: false,
   searchTerm: '',
   menuEl: null,
   collapsed: false,
@@ -150,94 +140,6 @@ function fileSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function messageWantsSearch(text, convo = null) {
-  const value = String(text || '').trim();
-  if (!value) return false;
-  if (/(不要|不用|别|无需|关闭|不)\s*(搜索|搜|联网|查)/.test(value)) return false;
-
-  const messages = Array.isArray(convo?.messages) ? convo.messages : [];
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
-  const deictic = /(这个|这些|上面|上述|刚才|前面|该来源|这篇|这份)/.test(value);
-  const strongFresh =
-    /(搜索|搜一下|搜下|查一下|查查|查资料|帮我查|联网|上网查|网上查|最新|实时|新闻|公告|发布|上线|更新|版本|价格|多少钱|费率|政策|法规|天气|气温|空气质量|股价|汇率|比分|赛程|获奖|诺贝尔|今天|今日|现在|当前|最近|今年|2026|抓取|网页抓取|打开网页|访问网页|fetch)/i.test(
-      value
-    );
-
-  // A follow-up such as "这个来源可靠吗" should use the sources already in
-  // context, not trigger another search.
-  if (deictic && lastAssistant?.sources?.length && !strongFresh) return false;
-
-  // Freshness / explicit-search intent. This is intentionally conservative:
-  // normal coding, translation and follow-up questions stay offline.
-  const wantsFresh =
-    strongFresh ||
-    /(官网|来源|引用|链接|https?:\/\/)/i.test(value);
-  if (wantsFresh) return true;
-
-  // Clearly local/static tasks: do not offer web tools.
-  if (
-    /(代码|编程|函数|实现|算法|bug|报错|异常|重构|单元测试|正则|SQL|翻译|润色|改写|写一篇|写个|故事|诗|数学|证明|公式|推导)/i.test(
-      value
-    ) ||
-    /```/.test(value)
-  ) {
-    return false;
-  }
-
-  // Short follow-ups should use the existing conversation context; only a
-  // new freshness word (handled above) should trigger another search.
-  if (
-    /^(继续|接着|然后呢|展开|详细(点|些)?|总结|概括|为什么|举个例子|还有呢|就这|再说说|解释一下|什么意思|怎么看|如何理解)[？?。！!\s]*$/i.test(
-      value
-    )
-  ) {
-    return false;
-  }
-
-  // Ambiguous general questions default to no search; the user can force it
-  // with the composer toggle or by asking explicitly.
-  return false;
-}
-
-function cleanSearchText(value) {
-  return String(value || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/<file[\s\S]*?<\/file>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Build a useful one-shot query for keyword-triggered auto search. Short
- * follow-ups such as "那最新价格呢" get the previous question prepended so the
- * search engine has enough context.
- */
-function autoSearchQuery(text, convo = null) {
-  const current = cleanSearchText(text);
-  if (!current) return '';
-
-  if (current.length >= 60) return current.slice(0, 128);
-
-  const messages = Array.isArray(convo?.messages) ? convo.messages : [];
-  const previous = [...messages]
-    .reverse()
-    .find(
-      (msg) =>
-        msg.role === 'user' &&
-        msg.content &&
-        cleanSearchText(msg.content) !== current
-    );
-
-  if (
-    previous &&
-    /(这个|那个|它|其|那|还|再|最新|现在|目前|价格|多少钱|怎么样)/.test(current)
-  ) {
-    return `${cleanSearchText(previous.content).slice(0, 70)} ${current}`.slice(0, 128);
-  }
-
-  return current.slice(0, 128);
 }
 
 function makeTitle(text, hasImages = false) {
@@ -352,7 +254,6 @@ function cacheDom() {
   dom.attachments = $('attachments');
   dom.fileInput = $('file-input');
   dom.thinkingToggle = $('thinking-toggle');
-  dom.searchToggle = $('search-toggle');
   dom.sendHint = $('send-hint');
   dom.sendBtn = $('send-btn');
 
@@ -381,8 +282,6 @@ function cacheDom() {
   dom.testResult = $('test-result');
 
   dom.setThinking = $('set-thinking');
-  dom.setWebSearch = $('set-web-search');
-  dom.setAllowFetch = $('set-allow-fetch');
   dom.setFoldThinking = $('set-fold-thinking');
   dom.setIncludeUsage = $('set-include-usage');
   dom.setSendOnEnter = $('set-send-on-enter');
@@ -391,15 +290,6 @@ function cacheDom() {
   dom.setTheme = $('set-theme');
   dom.setFontSize = $('set-font-size');
 
-  dom.setAnthropicSearch = $('set-anthropic-search');
-  dom.setAutoSearch = $('set-auto-search');
-  dom.setDeepseekOnly = $('set-deepseek-only');
-  dom.setKeyExa = $('set-key-exa');
-  dom.setKeyParallel = $('set-key-parallel');
-  dom.setKeyTavily = $('set-key-tavily');
-  dom.setFetchMode = $('set-fetch-mode');
-  dom.setFallbackDeepSeek = $('set-fallback-deepseek');
-  dom.setAllowPrivateFetch = $('set-allow-private-fetch');
   dom.testSearch = $('test-search');
   dom.testSearchResult = $('test-search-result');
 
@@ -733,7 +623,6 @@ async function openConversation(id) {
   closeConversationMenu();
   state.convo = convo;
   state.thinkingOn = convo.thinking ?? state.settings.thinking;
-  state.webOn = convo.webSearch ?? state.settings.webSearch;
   updateToggles();
   updateDocumentTitle();
   state.searchTerm = '';
@@ -755,7 +644,6 @@ function newChat({ focus = true } = {}) {
   updateDocumentTitle();
   state.attachments = [];
   state.thinkingOn = state.settings.thinking;
-  state.webOn = state.settings.webSearch;
   updateToggles();
   renderAttachments();
   dom.composer.value = '';
@@ -939,14 +827,14 @@ function renderAssistantMessage(msg, { isLast = false } = {}) {
   }
 
   if (msg.toolRuns?.length) {
-    renderToolPanel(el, msg.toolRuns, { open: false, live: false, sources: msg.sources || [] });
+    renderToolPanel(el, msg.toolRuns, { open: false, sources: msg.sources || [] });
   }
 
   if (msg.sources?.length) {
     renderSources(el, msg.sources);
   }
 
-  if (msg.usage) {
+  if (msg.usage && state.settings?.includeUsage !== false) {
     const usageEl = el.querySelector('.usage');
     usageEl.textContent = formatUsage(msg.usage);
     usageEl.title = usageTitle(msg.usage);
@@ -1043,15 +931,15 @@ function renderSources(el, sources) {
 }
 
 function toolNameLabel(name) {
-  return name === 'web_search' ? '联网搜索' : name === 'web_fetch' ? '网页抓取' : name || '工具';
+  return name === 'web_search' ? '联网搜索' : name || '工具';
 }
 
-function renderToolPanel(el, entries, { open = false, live = false, sources = [], pending = null } = {}) {
+function renderToolPanel(el, entries, { open = false, sources = [] } = {}) {
   const panel = el.querySelector('.tool-panel');
   if (!panel) return;
   const wasOpen = panel.classList.contains('open');
   const list = (entries || []).filter(Boolean);
-  if (!list.length && !pending) {
+  if (!list.length) {
     panel.classList.add('hidden');
     panel.classList.remove('open');
     return;
@@ -1059,30 +947,22 @@ function renderToolPanel(el, entries, { open = false, live = false, sources = []
   panel.classList.remove('hidden');
 
   const searches = list.filter((e) => e.name === 'web_search');
-  const fetches = list.filter((e) => e.name === 'web_fetch');
   const running = list.some((e) => e.status === 'running');
   const pageCount = new Set((sources || []).map((s) => s.url).filter(Boolean)).size;
-  const providers = [
-    ...new Set(list.map((e) => e.provider).filter(Boolean)),
-  ].map((id) => providerLabel(id));
-  const providerPrefix = providers.length ? `${providers.join(' / ')} · ` : '';
 
   let summary;
-  if (pending) {
-    summary = `${providerPrefix}正在调用 ${toolNameLabel(pending)}…`;
-  } else if (running) {
-    summary = `${providerPrefix}正在使用联网工具…`;
+  if (running) {
+    summary = '正在使用服务端搜索…';
   } else {
     const bits = [];
     if (searches.length) bits.push(`${searches.length} 次搜索`);
-    if (fetches.length) bits.push(`${fetches.length} 次抓取`);
     if (pageCount) bits.push(`${pageCount} 个来源`);
-    summary = bits.length ? `${providerPrefix}${bits.join(' · ')}` : '联网工具';
+    summary = bits.length ? bits.join(' · ') : '联网工具';
   }
 
   const head = `
     <button class="tool-head" type="button" aria-expanded="${open ? 'true' : 'false'}">
-      ${running || pending ? '<span class="spinner"></span>' : `<span class="tool-icon">${icon('globe', 14)}</span>`}
+      ${running ? '<span class="spinner"></span>' : `<span class="tool-icon">${icon('globe', 14)}</span>`}
       <span class="tool-summary"></span>
       <span class="tool-chev">${icon('chevronDown', 14)}</span>
     </button>
@@ -1092,13 +972,6 @@ function renderToolPanel(el, entries, { open = false, live = false, sources = []
   panel.querySelector('.tool-summary').textContent = summary;
 
   const body = panel.querySelector('.tool-body');
-
-  if (pending) {
-    const row = document.createElement('div');
-    row.className = 'tool-row';
-    row.innerHTML = `<span class="spinner"></span><span class="tool-text">正在准备调用 ${toolNameLabel(pending)}…</span>`;
-    body.appendChild(row);
-  }
 
   for (const entry of list) {
     const row = document.createElement('div');
@@ -1127,17 +1000,7 @@ function renderToolPanel(el, entries, { open = false, live = false, sources = []
     const label = document.createElement('span');
     label.className = 'q';
     if (entry.name === 'web_search') {
-      label.textContent = `${entry.auto ? '自动搜索' : '搜索'}${
-        entry.cached ? '（复用）' : ''
-      }：${entry.args?.query || ''}`;
-    } else if (entry.name === 'web_fetch') {
-      let host = entry.args?.url || '';
-      try {
-        host = new URL(entry.args.url).hostname;
-      } catch (_) {
-        /* keep */
-      }
-      label.textContent = `阅读：${entry.meta?.title || host}`;
+      label.textContent = `搜索：${entry.args?.query || ''}`;
     } else {
       label.textContent = toolNameLabel(entry.name);
     }
@@ -1146,7 +1009,7 @@ function renderToolPanel(el, entries, { open = false, live = false, sources = []
     if (entry.provider) {
       const provider = document.createElement('span');
       provider.className = 'badge provider-badge';
-      provider.textContent = providerLabel(entry.provider);
+      provider.textContent = entry.provider === 'messages' ? '服务端搜索' : entry.provider;
       headLine.appendChild(document.createTextNode(' '));
       headLine.appendChild(provider);
     }
@@ -1232,7 +1095,6 @@ function ensureConversation(firstText, hasImages) {
     createdAt: now,
     updatedAt: now,
     thinking: state.thinkingOn,
-    webSearch: state.webOn,
     messages: [],
   };
   state.index.unshift({
@@ -1261,20 +1123,6 @@ async function sendMessage() {
     return;
   }
 
-  const autoSearch =
-    !!text &&
-    !state.webOn &&
-    state.settings.autoSearch !== false &&
-    messageWantsSearch(text, state.convo);
-  const useTools = state.webOn || autoSearch;
-  if (autoSearch) {
-    toast(
-      state.settings.searchBackend === 'anthropic'
-        ? '本轮命中联网关键词，使用 Messages 原生搜索…'
-        : '本轮命中联网关键词，正在自动检索…'
-    );
-  }
-
   closeConversationMenu();
   const attachments = state.attachments.slice();
   const hasImages = attachments.some((a) => a.type === 'image');
@@ -1298,7 +1146,7 @@ async function sendMessage() {
   scrollToBottom(true, true);
   await persistConversation();
 
-  await runAssistantTurn({ useTools, autoSearch });
+  await runAssistantTurn();
 }
 
 function startThinkingClock(run) {
@@ -1329,7 +1177,6 @@ function handleDelta(run, delta) {
 
   if (delta.reasoning) {
     run.assistant.reasoning += delta.reasoning;
-    if (run.current) run.current.reasoning += delta.reasoning;
     ensureThinkingVisible(run);
     scheduleThinkingRender(run);
     autoScroll(run);
@@ -1337,7 +1184,6 @@ function handleDelta(run, delta) {
 
   if (delta.content) {
     run.assistant.content += delta.content;
-    if (run.current) run.current.content += delta.content;
     if (!run.thinkingEnd && run.assistant.reasoning) {
       run.thinkingEnd = Date.now();
       run.assistant.thinkingSecs = Math.max(1, Math.round((run.thinkingEnd - run.thinkingStart) / 1000));
@@ -1402,14 +1248,6 @@ function addSources(run, sources) {
   if (run.assistant.sources.length) renderSources(run.el, run.assistant.sources);
 }
 
-function anthropicHost(url) {
-  try {
-    return new URL(url).hostname;
-  } catch (_) {
-    return '';
-  }
-}
-
 function mapAnthropicUsage(usage) {
   if (!usage) return null;
   const input = Number(usage.input_tokens) || 0;
@@ -1428,10 +1266,51 @@ function mapAnthropicUsage(usage) {
   };
 }
 
+function refreshToolPanel(run) {
+  renderToolPanel(run.el, run.toolEntries, {
+    open: false,
+    sources: run.assistant.sources,
+  });
+  autoScroll(run);
+}
+
+function beginToolEntry(run, entry) {
+  run.toolEntries.push(entry);
+  run.el.querySelector('.pending-hint')?.classList.add('hidden');
+  refreshToolPanel(run);
+  return entry;
+}
+
+function finishToolEntry(run, entry, { sources = [], meta = null, provider = 'messages' } = {}) {
+  entry.status = 'ok';
+  entry.error = null;
+  entry.count = sources.length;
+  entry.meta = meta;
+  entry.provider = provider;
+  entry.links = sources.slice(0, 6).map((source) => ({
+    title: source.title,
+    url: source.url,
+  }));
+  addSources(run, sources);
+  refreshToolPanel(run);
+}
+
+function failToolEntry(run, entry, message) {
+  entry.status = 'error';
+  entry.error = message;
+  refreshToolPanel(run);
+}
+
 function anthropicToolEntry(run, tool) {
   const id = tool.id || uid('tool');
   let entry = run.toolEntries.find((item) => item.id === id);
-  if (entry) return entry;
+  if (entry) {
+    if (tool.input && Object.keys(tool.input).length) {
+      entry.args = tool.input;
+      refreshToolPanel(run);
+    }
+    return entry;
+  }
   entry = {
     id,
     name: tool.name || 'web_search',
@@ -1443,15 +1322,7 @@ function anthropicToolEntry(run, tool) {
     meta: null,
     provider: 'messages',
   };
-  run.toolEntries.push(entry);
-  run.el.querySelector('.pending-hint')?.classList.add('hidden');
-  renderToolPanel(run.el, run.toolEntries, {
-    open: false,
-    live: true,
-    sources: run.assistant.sources,
-  });
-  autoScroll(run);
-  return entry;
+  return beginToolEntry(run, entry);
 }
 
 function addAnthropicToolUse(run, tool) {
@@ -1471,9 +1342,9 @@ function completeAnthropicToolUse(run, data) {
     }
     if (!result?.url) continue;
     sources.push({
-      title: result.title || anthropicHost(result.url) || result.url,
+      title: result.title || hostOf(result.url) || result.url,
       url: result.url,
-      site: anthropicHost(result.url),
+      site: hostOf(result.url),
       date: result.page_age || result.published_date || '',
       snippet: '',
       summary: '',
@@ -1488,29 +1359,21 @@ function completeAnthropicToolUse(run, data) {
       input: {},
     });
   }
-  entry.status = sources.length ? 'ok' : 'error';
-  entry.error = sources.length ? null : toolError || '搜索未返回结果';
-  entry.count = sources.length;
-  entry.links = sources.slice(0, 6).map((source) => ({
-    title: source.title,
-    url: source.url,
-  }));
-  entry.meta = {
+  const meta = {
     query: entry.args?.query || '',
     count: sources.length,
     provider: 'messages',
   };
-
-  addSources(run, sources);
-  renderToolPanel(run.el, run.toolEntries, {
-    open: false,
-    live: true,
-    sources: run.assistant.sources,
-  });
-  autoScroll(run);
+  if (!sources.length) {
+    entry.count = 0;
+    entry.meta = meta;
+    failToolEntry(run, entry, toolError || '搜索未返回结果');
+    return;
+  }
+  finishToolEntry(run, entry, { sources, meta });
 }
 
-async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useTools }) {
+async function runAnthropicAssistantTurn(run, { systemMessage, useThinking }) {
   const settings = state.settings;
   let error = null;
   let aborted = false;
@@ -1526,7 +1389,7 @@ async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useT
       thinking: useThinking,
       effort: settings.thinkingEffort,
       maxTokens: settings.maxTokens,
-      tools: useTools,
+      temperature: settings.temperature,
       searchCount: settings.searchCount,
       signal: run.controller.signal,
       onText: (text) => handleDelta(run, { content: text }),
@@ -1541,10 +1404,6 @@ async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useT
         run.finishReason = stopReason === 'max_tokens' ? 'length' : stopReason || '';
       },
     });
-    run.apiFinal = {
-      content: run.assistant.content,
-      reasoning: run.assistant.reasoning,
-    };
   } catch (err) {
     if (err?.name === 'AbortError') {
       aborted = true;
@@ -1553,233 +1412,6 @@ async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useT
     }
   } finally {
     await finishTurn(run, { aborted, error });
-  }
-}
-
-function searchRequestOptions(run) {
-  const last = [...(run.toolEntries || [])]
-    .reverse()
-    .find((entry) => entry.name === 'web_search' && entry.provider);
-  return {
-    searchProvider: state.settings.searchProvider || 'auto',
-    searchKeys: state.settings.searchKeys || {},
-    lastSearchProvider: last?.provider || run.convo?.lastSearchProvider || '',
-  };
-}
-
-/**
- * Keyword-triggered search. Unlike the normal model-driven tool loop this runs
- * before the first model request, so "最新/新闻/价格" questions still get
- * searched when the composer's web toggle is off.
- */
-async function runAutoSearch(run, { query, count, oriQuestion }) {
-  const entry = {
-    id: uid('tool'),
-    name: 'web_search',
-    args: { query, count },
-    status: 'running',
-    count: 0,
-    links: [],
-    error: null,
-    meta: null,
-    provider: '',
-    auto: true,
-  };
-  run.toolEntries.push(entry);
-  renderToolPanel(run.el, run.toolEntries, {
-    open: false,
-    live: true,
-    sources: run.assistant.sources,
-  });
-  autoScroll(run);
-
-  try {
-    const out = await executeTool({
-      baseUrl: state.settings.baseUrl,
-      apiKey: state.settings.apiKey,
-      name: 'web_search',
-      args: { query, count },
-      signal: run.controller.signal,
-      defaultCount: state.settings.searchCount,
-      oriQuestion,
-      sourceOffset: 0,
-      existingUrls: [],
-      webFetchMode: state.settings.webFetchMode,
-      fallbackDeepSeek: state.settings.fallbackDeepSeek,
-      allowPrivateFetch: state.settings.allowPrivateFetch,
-      ...searchRequestOptions(run),
-    });
-
-    entry.status = 'ok';
-    entry.count = out.meta?.count ?? out.sources?.length ?? 0;
-    entry.meta = out.meta || null;
-    entry.provider = out.meta?.provider || 'deepseek';
-    if (out.meta?.provider) run.convo.lastSearchProvider = out.meta.provider;
-    entry.links = (out.sources || [])
-      .filter((source) => source?.url)
-      .slice(0, 6)
-      .map((source) => ({ title: source.title || source.url, url: source.url }));
-
-    addSources(run, out.sources);
-    renderToolPanel(run.el, run.toolEntries, {
-      open: false,
-      live: true,
-      sources: run.assistant.sources,
-    });
-    autoScroll(run);
-    return out;
-  } catch (err) {
-    if (err?.name === 'AbortError') throw err;
-    entry.status = 'error';
-    entry.error = err?.message || String(err);
-    renderToolPanel(run.el, run.toolEntries, {
-      open: false,
-      live: true,
-      sources: run.assistant.sources,
-    });
-    autoScroll(run);
-    toast('自动搜索失败，已跳过检索结果');
-    return null;
-  }
-}
-
-function reuseAutoSearch(run, userMsg) {
-  const sources = Array.isArray(userMsg.searchSources) ? userMsg.searchSources : [];
-  if (!sources.length || !userMsg.searchContext) return false;
-  const provider = userMsg.searchProvider || 'deepseek';
-
-  const entry = {
-    id: uid('tool'),
-    name: 'web_search',
-    args: {
-      query: userMsg.searchQuery || '',
-      count: sources.length,
-    },
-    status: 'ok',
-    count: sources.length,
-    links: sources
-      .filter((source) => source?.url)
-      .slice(0, 6)
-      .map((source) => ({ title: source.title || source.url, url: source.url })),
-    error: null,
-    meta: {
-      query: userMsg.searchQuery || '',
-      count: sources.length,
-      provider,
-      reused: true,
-    },
-    provider,
-    auto: true,
-    cached: true,
-  };
-
-  run.toolEntries.push(entry);
-  addSources(run, sources);
-  renderToolPanel(run.el, run.toolEntries, {
-    open: false,
-    live: true,
-    sources: run.assistant.sources,
-  });
-  autoScroll(run);
-  return true;
-}
-
-async function ensureAutoSearch(run, userMsg, originalQuestion) {
-  if (!userMsg) return;
-
-  const fresh =
-    userMsg.searchContext &&
-    Date.now() - (userMsg.searchContextAt || 0) < AUTO_SEARCH_TTL;
-  if (fresh && reuseAutoSearch(run, userMsg)) return;
-
-  const query = autoSearchQuery(originalQuestion, run.convo);
-  if (!query) return;
-
-  const out = await runAutoSearch(run, {
-    query,
-    count: state.settings.searchCount,
-    oriQuestion: originalQuestion,
-  });
-  if (!out?.sources?.length || !out.text) return;
-
-  userMsg.searchContext = out.text;
-  userMsg.searchContextAt = Date.now();
-  userMsg.searchSources = out.sources;
-  userMsg.searchQuery = query;
-  userMsg.searchProvider = out.meta?.provider || '';
-}
-
-async function runToolCall(run, call, originalQuestion) {
-  const name = call.function?.name || 'unknown';
-  let args = {};
-  try {
-    args = JSON.parse(call.function?.arguments || '{}');
-  } catch (_) {
-    args = {};
-  }
-
-  run.pendingTool = null;
-  const entry = {
-    id: uid('tool'),
-    name,
-    args,
-    status: 'running',
-    count: 0,
-    links: [],
-    error: null,
-    meta: null,
-    provider: '',
-  };
-  run.toolEntries.push(entry);
-  renderToolPanel(run.el, run.toolEntries, {
-    open: false,
-    live: true,
-    sources: run.assistant.sources,
-  });
-  autoScroll(run);
-
-  try {
-    const out = await executeTool({
-      baseUrl: state.settings.baseUrl,
-      apiKey: state.settings.apiKey,
-      name,
-      args,
-      signal: run.controller.signal,
-      defaultCount: state.settings.searchCount,
-      oriQuestion: originalQuestion,
-      sourceOffset: run.assistant.sources.length,
-      existingUrls: run.assistant.sources.map((s) => s.url),
-      webFetchMode: state.settings.webFetchMode,
-      fallbackDeepSeek: state.settings.fallbackDeepSeek,
-      allowPrivateFetch: state.settings.allowPrivateFetch,
-      ...searchRequestOptions(run),
-    });
-    entry.status = 'ok';
-    entry.count = out.meta?.count ?? out.sources?.length ?? 0;
-    entry.meta = out.meta || null;
-    entry.provider = out.meta?.provider || '';
-    if (out.meta?.provider) run.convo.lastSearchProvider = out.meta.provider;
-    entry.links = (out.sources || [])
-      .filter((s) => s?.url)
-      .slice(0, 6)
-      .map((s) => ({ title: s.title || s.url, url: s.url }));
-    addSources(run, out.sources);
-    renderToolPanel(run.el, run.toolEntries, {
-      open: false,
-      live: true,
-      sources: run.assistant.sources,
-    });
-    return out.text;
-  } catch (err) {
-    if (err?.name === 'AbortError') throw err;
-    entry.status = 'error';
-    entry.error = err?.message || String(err);
-    renderToolPanel(run.el, run.toolEntries, {
-      open: false,
-      live: true,
-      sources: run.assistant.sources,
-    });
-    return `工具执行失败：${entry.error}`;
   }
 }
 
@@ -1803,18 +1435,11 @@ function getConversationSystemMessage(convo, settings) {
   return convo.systemMessage;
 }
 
-async function runAssistantTurn({
-  useTools: useToolsOverride = null,
-  autoSearch = false,
-} = {}) {
+async function runAssistantTurn() {
   const convo = state.convo;
   const settings = state.settings;
   const useThinking = state.thinkingOn;
-  let useTools = useToolsOverride ?? state.webOn;
   convo.thinking = useThinking;
-  // Persist only the manual composer toggle; context-based auto search is
-  // decided again for every turn and must not stay on for the whole chat.
-  convo.webSearch = state.webOn;
 
   const assistant = {
     id: uid('m'),
@@ -1849,14 +1474,8 @@ async function runAssistantTurn({
     thinkingRenderTimer: null,
     answerTimer: null,
     toolEntries: [],
-    trace: [],
-    apiFinal: null,
-    current: { content: '', reasoning: '' },
-    lastHadToolCalls: false,
     finishReason: '',
-    pendingTool: null,
     usage: null,
-    aborted: false,
   };
   state.streaming = run;
   setStreamingUI(true);
@@ -1865,179 +1484,7 @@ async function runAssistantTurn({
   requestAnimationFrame(() => scrollToBottom(true, true));
 
   const systemMessage = getConversationSystemMessage(convo, settings);
-
-  // Messages mode: the whole turn goes to the DeepSeek Messages-compatible
-  // endpoint, with native server-side web_search when the composer's web
-  // toggle is on. Chat mode uses Chat Completions + DeepSeek Search.
-  if (settings.searchBackend === 'anthropic') {
-    await runAnthropicAssistantTurn(run, { systemMessage, useThinking, useTools });
-    return;
-  }
-
-  let tools = useTools ? buildToolDefinitions(settings.allowFetch) : null;
-  const lastUser = [...convo.messages].reverse().find((m) => m.role === 'user');
-  const originalQuestion = lastUser?.content || '';
-
-  let error = null;
-  let aborted = false;
-  let apiMessages = null;
-
-  try {
-    // Chat mode: keyword-triggered search happens before the first model call,
-    // so it works even when the composer's web toggle is off. Messages mode
-    // uses its server-side web_search tool instead.
-    if (autoSearch) {
-      await ensureAutoSearch(run, lastUser, originalQuestion);
-    }
-
-    apiMessages = buildApiMessages(
-      convo.messages.slice(0, -1),
-      settings,
-      systemMessage
-    );
-
-    for (let loop = 0; loop <= TOOL_LOOP_LIMIT; loop += 1) {
-      run.current = { content: '', reasoning: '' };
-      run.lastHadToolCalls = false;
-      const result = await streamChat({
-        baseUrl: settings.baseUrl,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        messages: apiMessages,
-        thinking: useThinking,
-        reasoningEffort: settings.thinkingEffort,
-        maxTokens: settings.maxTokens,
-        temperature: settings.temperature,
-        tools,
-        includeUsage: settings.includeUsage,
-        signal: controller.signal,
-        onDelta: (delta) => handleDelta(run, delta),
-        onToolCall: ({ name }) => {
-          if (state.streaming !== run) return;
-          run.el.querySelector('.pending-hint')?.classList.add('hidden');
-          run.pendingTool = name;
-          renderToolPanel(run.el, run.toolEntries, {
-            pending: name,
-            open: false,
-            live: true,
-            sources: run.assistant.sources,
-          });
-        },
-      });
-
-      if (result.usage) run.usage = result.usage;
-      run.finishReason = result.finishReason || '';
-
-      // Some models fall back to a textual tool-call protocol (especially when
-      // the request did not declare tools). Recover those calls, remove the raw
-      // markers from the answer, and continue the normal tool loop.
-      if (!result.toolCalls?.length && result.content) {
-        const parsed = parseRawToolCalls(result.content);
-        const changed = parsed.cleaned !== result.content;
-        if (changed) {
-          if (run.assistant.content.endsWith(result.content)) {
-            run.assistant.content =
-              run.assistant.content.slice(0, -result.content.length) + parsed.cleaned;
-          } else {
-            run.assistant.content = run.assistant.content.replace(
-              result.content,
-              parsed.cleaned
-            );
-          }
-          if (run.current) run.current.content = parsed.cleaned;
-          result.content = parsed.cleaned;
-          const answerEl = run.el.querySelector('.answer');
-          if (answerEl) {
-            answerEl.innerHTML = renderMarkdown(run.assistant.content, {
-              citations: run.assistant.sources,
-              highlight: false,
-              math: false,
-            });
-          }
-        }
-
-        if (parsed.calls.length) {
-          if (
-            !tools &&
-            settings.autoSearch !== false &&
-            messageWantsSearch(originalQuestion, convo)
-          ) {
-            useTools = true;
-            tools = buildToolDefinitions(settings.allowFetch);
-            toast('本轮按上下文启用联网（模型按需调用）');
-          }
-
-          if (!tools) {
-            run.assistant.notice =
-              '模型尝试调用联网搜索，但联网搜索当前已关闭，已忽略该调用。';
-          } else {
-            result.toolCalls = parsed.calls.map((call, index) => ({
-              id: `call_raw_${Date.now().toString(36)}_${index}`,
-              type: 'function',
-              function: {
-                name: call.name,
-                arguments: JSON.stringify(call.args || {}),
-              },
-            }));
-          }
-        } else if (changed) {
-          run.assistant.notice =
-            '模型尝试调用联网工具，但调用格式无法解析，已忽略该调用。';
-        }
-      }
-
-      run.lastHadToolCalls = !!result.toolCalls?.length;
-
-      if (!result.toolCalls?.length) {
-        run.apiFinal = {
-          content: result.content || '',
-          reasoning: result.reasoning || '',
-        };
-        break;
-      }
-
-      if (loop === TOOL_LOOP_LIMIT) {
-        throw new Error('联网工具调用次数过多，已自动停止。');
-      }
-
-      const calls = result.toolCalls.map((call, index) => ({
-        ...call,
-        id: call.id || `call_${loop}_${index}`,
-      }));
-
-      const toolCallMessage = {
-        role: 'assistant',
-        content: result.content || '',
-        tool_calls: calls,
-      };
-      if (result.reasoning) toolCallMessage.reasoning_content = result.reasoning;
-      apiMessages.push(toolCallMessage);
-
-      // Only commit a complete assistant-tool + tool-results exchange to the
-      // persisted trace. If the user aborts mid-tool, we avoid persisting an
-      // assistant tool_calls message without matching tool results.
-      const exchange = [toolCallMessage];
-      for (const call of calls) {
-        const content = await runToolCall(run, call, originalQuestion);
-        const toolMessage = {
-          role: 'tool',
-          tool_call_id: call.id,
-          content,
-        };
-        apiMessages.push(toolMessage);
-        exchange.push(toolMessage);
-      }
-      run.trace.push(...exchange);
-    }
-  } catch (err) {
-    if (err?.name === 'AbortError') {
-      aborted = true;
-    } else {
-      error = err;
-    }
-  } finally {
-    await finishTurn(run, { aborted, error });
-  }
+  await runAnthropicAssistantTurn(run, { systemMessage, useThinking });
 }
 
 async function finishTurn(run, { aborted = false, error = null } = {}) {
@@ -2070,30 +1517,7 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
     error: entry.error,
     meta: entry.meta,
     provider: entry.provider,
-    auto: !!entry.auto,
-    cached: !!entry.cached,
   }));
-
-  // Keep the final sub-turn separate from the combined display text. The
-  // hidden tool trace already contains earlier sub-turns' content/reasoning;
-  // the final assistant message must not repeat them.
-  const final = run.apiFinal || (!run.lastHadToolCalls ? run.current : null);
-  if (final) {
-    assistant.apiFinalContent = final.content || '';
-    assistant.apiFinalReasoning = final.reasoning || '';
-  }
-
-  // Persist the hidden tool exchange so subsequent requests replay the exact
-  // same prefix. Only keep it when the assistant produced a final message;
-  // otherwise the trace would end with tool results and no assistant reply.
-  if (
-    run.trace.length &&
-    final &&
-    ((assistant.apiFinalContent || '').trim() ||
-      (assistant.apiFinalReasoning || '').trim())
-  ) {
-    assistant.toolTrace = run.trace;
-  }
 
   if (aborted) {
     assistant.stopped = true;
@@ -2139,7 +1563,6 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
   if (assistant.toolRuns.length) {
     renderToolPanel(run.el, assistant.toolRuns, {
       open: run.toolEntries.some((e) => e.status === 'error'),
-      live: false,
       sources: assistant.sources,
     });
   }
@@ -2147,7 +1570,7 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
   if (assistant.sources.length) renderSources(run.el, assistant.sources);
 
   const usageEl = run.el.querySelector('.usage');
-  if (assistant.usage && usageEl) {
+  if (settings.includeUsage && assistant.usage && usageEl) {
     usageEl.textContent = formatUsage(assistant.usage);
     usageEl.title = usageTitle(assistant.usage);
   }
@@ -2216,18 +1639,10 @@ async function regenerate(assistantId) {
   const index = state.convo.messages.findIndex((m) => m.id === assistantId);
   if (index < 0) return;
 
-  const previousUser = [...state.convo.messages.slice(0, index)].reverse().find((m) => m.role === 'user');
-  if (!previousUser) return;
-
   state.convo.messages.splice(index);
   renderMessages();
   await persistConversation();
-  const autoSearch =
-    !state.webOn &&
-    state.settings.autoSearch !== false &&
-    messageWantsSearch(previousUser.content || '', state.convo);
-  const useTools = state.webOn || autoSearch;
-  await runAssistantTurn({ useTools, autoSearch });
+  await runAssistantTurn();
 }
 
 async function editUserMessage(messageId) {
@@ -2497,7 +1912,6 @@ function updateApiNotice() {
 
 function updateToggles() {
   setToggle(dom.thinkingToggle, state.thinkingOn);
-  setToggle(dom.searchToggle, state.webOn);
 }
 
 function updateScrollState() {
@@ -2609,26 +2023,17 @@ function populateSettingsForm() {
   dom.setMaxTokens.value = String(s.maxTokens ?? DEFAULT_SETTINGS.maxTokens);
   dom.setSystemPrompt.value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
   dom.setThinking.checked = !!s.thinking;
-  dom.setWebSearch.checked = !!s.webSearch;
-  dom.setAllowFetch.checked = s.allowFetch !== false;
   dom.setFoldThinking.checked = s.foldThinking !== false;
   dom.setIncludeUsage.checked = s.includeUsage !== false;
   dom.setSendOnEnter.checked = s.sendOnEnter !== false;
-  dom.setSearchCount.value = String(s.searchCount ?? 8);
+  dom.setSearchCount.value = String(s.searchCount ?? 5);
   dom.setTemperature.value = String(s.temperature ?? 1);
-  dom.setAnthropicSearch.checked = s.searchBackend !== 'builtin';
-  dom.setAutoSearch.checked = s.autoSearch !== false;
-  dom.setDeepseekOnly.checked = s.searchProvider === 'deepseek';
-  dom.setKeyExa.value = s.searchKeys?.exa || '';
-  dom.setKeyParallel.value = s.searchKeys?.parallel || '';
-  dom.setKeyTavily.value = s.searchKeys?.tavily || '';
-  dom.setFetchMode.value = s.webFetchMode || 'local';
-  dom.setFallbackDeepSeek.checked = s.fallbackDeepSeek !== false;
-  dom.setAllowPrivateFetch.checked = !!s.allowPrivateFetch;
   dom.setTheme.value = s.theme || 'auto';
   dom.setFontSize.value = String(s.fontSize || 16);
   dom.testResult.textContent = '';
   dom.testResult.className = 'test-result';
+  dom.testSearchResult.textContent = '';
+  dom.testSearchResult.className = 'test-result';
 }
 
 function openSettings(tab = 'api') {
@@ -2656,24 +2061,11 @@ async function saveSettingsFromForm() {
   next.maxTokens = clampInt(dom.setMaxTokens.value, 0, 393216, DEFAULT_SETTINGS.maxTokens);
   next.systemPrompt = dom.setSystemPrompt.value.trim() || DEFAULT_SYSTEM_PROMPT;
   next.thinking = dom.setThinking.checked;
-  next.webSearch = dom.setWebSearch.checked;
-  next.allowFetch = dom.setAllowFetch.checked;
   next.foldThinking = dom.setFoldThinking.checked;
   next.includeUsage = dom.setIncludeUsage.checked;
   next.sendOnEnter = dom.setSendOnEnter.checked;
-  next.searchCount = clampInt(dom.setSearchCount.value, 1, 20, 8);
+  next.searchCount = clampInt(dom.setSearchCount.value, 2, 8, 5);
   next.temperature = clampFloat(dom.setTemperature.value, 0, 2, 1);
-  next.searchBackend = dom.setAnthropicSearch.checked ? 'anthropic' : 'builtin';
-  next.autoSearch = dom.setAutoSearch.checked;
-  next.searchProvider = dom.setDeepseekOnly.checked ? 'deepseek' : 'auto';
-  next.searchKeys = {
-    exa: dom.setKeyExa.value.trim(),
-    parallel: dom.setKeyParallel.value.trim(),
-    tavily: dom.setKeyTavily.value.trim(),
-  };
-  next.webFetchMode = dom.setFetchMode.value === 'deepseek' ? 'deepseek' : 'local';
-  next.fallbackDeepSeek = dom.setFallbackDeepSeek.checked;
-  next.allowPrivateFetch = dom.setAllowPrivateFetch.checked;
   next.theme = dom.setTheme.value;
   next.fontSize = Number(dom.setFontSize.value) || 16;
 
@@ -2685,7 +2077,6 @@ async function saveSettingsFromForm() {
   }
   if (!state.convo) {
     state.thinkingOn = state.settings.thinking;
-    state.webOn = state.settings.webSearch;
   }
 
   applyTheme();
@@ -2755,41 +2146,16 @@ async function testWebSearch() {
   dom.testSearchResult.className = 'test-result';
 
   try {
-    const backend = dom.setAnthropicSearch.checked ? 'messages' : 'chat';
-    if (backend === 'messages') {
-      const out = await messagesSearch({
-        baseUrl,
-        apiKey,
-        model,
-        query,
-        count: 3,
-      });
-      dom.testSearchResult.textContent = `${providerLabel(out.provider)} · ${
-        out.sources.length
-      } 个来源 · ${out.sources[0]?.title || '无结果'}`;
-    } else {
-      const out = await executeTool({
-        baseUrl,
-        apiKey,
-        name: 'web_search',
-        args: { query, count: 3 },
-        defaultCount: 3,
-        searchProvider: dom.setDeepseekOnly.checked ? 'deepseek' : 'auto',
-        searchKeys: {
-          exa: dom.setKeyExa.value.trim(),
-          parallel: dom.setKeyParallel.value.trim(),
-          tavily: dom.setKeyTavily.value.trim(),
-        },
-      });
-      const used = providerLabel(out.meta?.provider);
-      const failed = Array.isArray(out.meta?.failedProviders) ? out.meta.failedProviders : [];
-      const fallback = failed.length
-        ? `（${failed.map(providerLabel).join(' / ')} 不可用，已回退）`
-        : '';
-      dom.testSearchResult.textContent = `${used} · ${out.meta.count} 条${fallback} · ${
-        out.sources[0]?.title || '无结果'
-      }`;
-    }
+    const out = await messagesSearch({
+      baseUrl,
+      apiKey,
+      model,
+      query,
+      count: 3,
+    });
+    dom.testSearchResult.textContent = `服务端搜索 · ${out.sources.length} 个来源 · ${
+      out.sources[0]?.title || '无结果'
+    }`;
     dom.testSearchResult.className = 'test-result ok';
   } catch (err) {
     dom.testSearchResult.textContent = err.message;
@@ -2924,7 +2290,6 @@ async function importEverything(file) {
     state.settings = await loadSettings();
     state.index = await loadIndex();
     state.thinkingOn = state.settings.thinking;
-    state.webOn = state.settings.webSearch;
     applyTheme();
     applyFontSize();
     updateModelUI();
@@ -2964,7 +2329,6 @@ async function clearEverything() {
   state.ui = {};
   state.convo = null;
   state.thinkingOn = state.settings.thinking;
-  state.webOn = state.settings.webSearch;
   dom.settingsDialog.close();
   newChat({ focus: false });
   applyTheme();
@@ -3098,16 +2462,6 @@ function bindEvents() {
     toast(state.thinkingOn ? '已开启深度思考' : '已关闭深度思考');
   });
 
-  dom.searchToggle.addEventListener('click', () => {
-    state.webOn = !state.webOn;
-    updateToggles();
-    toast(
-      state.webOn
-        ? '已开启联网搜索：将调用 DeepSeek 云端搜索 / 抓取（按次计费）'
-        : '已关闭联网搜索'
-    );
-  });
-
   dom.fileInput.addEventListener('change', () => {
     addFiles(dom.fileInput.files);
     dom.fileInput.value = '';
@@ -3129,10 +2483,6 @@ function bindEvents() {
     const btn = e.target.closest('button[data-prompt]');
     if (!btn) return;
     dom.composer.value = btn.dataset.prompt;
-    if (btn.dataset.search) {
-      state.webOn = true;
-      updateToggles();
-    }
     if (btn.dataset.attach) {
       state.thinkingOn = state.settings.thinking;
       updateToggles();
@@ -3442,7 +2792,6 @@ async function init() {
   const ui = await loadUiState();
   state.ui = ui && typeof ui === 'object' && !Array.isArray(ui) ? ui : {};
   state.thinkingOn = state.settings.thinking;
-  state.webOn = state.settings.webSearch;
   state.collapsed = !!state.ui.sidebarCollapsed;
 
   applyTheme();

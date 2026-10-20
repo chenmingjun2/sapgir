@@ -5,6 +5,8 @@
 > 说明：这是工程/合规风险清单，**不是法律意见**；正式商业发布前建议让律师复核，尤其是商标、UI 著作权和 API 条款。
 
 > **2026-10-18 更新：** 当前 worktree 已完成去品牌化（Sapgir + 原创图标 + 兼容 DeepSeek 端点的文案）并移除 OpenCode/第三方搜索 provider/keyless 调用。下面保留审计时的风险分析作为历史记录；剩余事项见文末“当前剩余”。
+>
+> **2026-10-20 更新：** 插件已改为 **Anthropic Messages 单端点**，联网只使用服务端原生 `web_search`。已删除 Chat Completions 客户端、DeepSeek Search/Fetch 原始 API、Exa / Parallel / Tavily 多引擎、本地网页抓取和手动联网开关；不再包含任何第三方搜索 provider 或 keyless 路径。
 
 ## 结论
 
@@ -56,9 +58,9 @@
 
 #### 2. Keyless 搜索 provider / 伪装 OpenCode
 
-**当前状态：** 已移除所有 keyless 调用、伪装 OpenCode UA 和 Service Worker 搜索代理。2026-10-20 起，Chat 模式在 DeepSeek Search 基础上增加了 BYOK 的 Exa / Parallel / Tavily 多引擎轮换：每个引擎只使用用户自己在该 provider 申请的 API Key，没有任何共享凭证、伪装头或 keyless 路径；未配置 Key 的引擎不参与轮换。当前引擎失败时会按随机顺序尝试其余已配置引擎，直到列表用尽；另有开关可强制只使用 DeepSeek Search。Messages 模式只使用 DeepSeek 兼容端点。
+**当前状态：** 已移除所有 keyless 调用、伪装 OpenCode UA 和 Service Worker 搜索代理。2026-10-20 起插件只使用 DeepSeek Anthropic Messages 端点；联网由服务端原生 `web_search` 执行，客户端不再调用 DeepSeek Search/Fetch 原始 API，也不接入 Exa / Parallel / Tavily 或任何第三方搜索 provider。没有共享凭证、伪装头或 keyless 路径。
 
-**位置：**
+**位置（历史记录，相关代码已删除）：**
 
 - `js/websearch.js`
   - `const UA = 'opencode/2.0.27'`
@@ -91,7 +93,7 @@
 
 MIT 与当前依赖兼容：
 
-- `DOMPurify` 是 `Apache-2.0 OR MPL-2.0`；`highlight.js` 是 BSD-3-Clause；`marked`、`KaTeX`、`Turndown` 是 MIT；KaTeX 字体是 SIL OFL 1.1。它们都可以与 MIT 项目一起分发，但必须保留各自版权和许可声明。
+- `DOMPurify` 是 `Apache-2.0 OR MPL-2.0`；`highlight.js` 是 BSD-3-Clause；`marked`、`KaTeX` 是 MIT；KaTeX 字体是 SIL OFL 1.1。它们都可以与 MIT 项目一起分发，但必须保留各自版权和许可声明。
 - MIT 允许商业使用、修改和闭源再分发；这对你后续商业化最灵活。
 - MIT 不要求衍生分发开源；如果你以后希望强制回馈，才需要重新考虑 GPL/AGPL（需所有贡献者同意）。
 - 当前没有使用 GPL/AGPL；不要声称项目是 GNU 许可证。
@@ -101,7 +103,7 @@ MIT 与当前依赖兼容：
 - `THIRD_PARTY_NOTICES.md` 只给了链接，没有附 MIT/BSD/Apache/MPL 的完整许可证文本。MIT/BSD 要求随分发保留版权和许可声明。
 - `KaTeX` 字体（`vendor/katex/fonts/*.woff2`）是 SIL OFL 1.1，当前未列出。
 - `KaTeX auto-render` 未单独列出。
-- `Turndown` / `turndown-plugin-gfm` 的 minified 文件没有许可证头，需在通知中附 MIT 文本。
+- `Turndown` / `turndown-plugin-gfm` 已随本地网页抓取一起移除，不再随扩展分发。
 - `js/icons.js` 的图标路径若来自 Lucide/Feather，需要加 ISC/MIT 归属或替换。
 - 品牌资源不随 MIT 代码授权；`TRADEMARKS.md` 已说明这一点。
 
@@ -118,8 +120,7 @@ MIT 与当前依赖兼容：
 **数据流：**
 
 - 对话、图片、文件 → 用户配置的 Base URL（默认 DeepSeek）
-- Anthropic 模式 → DeepSeek 的 `/anthropic/v1/messages`
-- Chat 模式搜索 query → DeepSeek Search API；本地抓取的 URL → 目标网站
+- 所有对话与联网请求 → DeepSeek 的 `/anthropic/v1/messages`；搜索和抓取由服务端原生 `web_search` 完成
 - 右键总结 → 当前页面正文发送到模型 API
 - API Key → `chrome.storage.local` 明文
 
@@ -159,7 +160,7 @@ MIT 与当前依赖兼容：
 ## 建议的发布顺序
 
 1. ✅ **去品牌化**：改名、换图标/Logo、改欢迎语/关于页/导出署名/README；截图已替换。
-2. ✅ **移除 keyless + 伪装 UA**：已改为只使用 DeepSeek Search / Messages 端点。
+2. ✅ **移除 keyless + 伪装 UA**：已改为只使用 DeepSeek Anthropic Messages 端点 + 服务端原生 `web_search`。
 3. **确认 MIT 许可证**：`LICENSE` 已为 MIT；补全 `LICENSES/`、`TRADEMARKS.md`、SPDX。
 4. **补隐私/条款**：`PRIVACY.md`、AI 标识、Chrome Web Store 权限说明。
 5. **UI 差异化**：降低复刻视觉风险。

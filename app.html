@@ -62,7 +62,7 @@
             <span data-icon="panelLeft"></span>
           </button>
 
-          <div class="model-picker" id="model-picker">
+          <div class="model-picker">
             <button class="model-btn" id="model-btn" type="button" aria-haspopup="menu" aria-expanded="false">
               <span class="model-dot"></span>
               <span id="model-name">deepseek-flash</span>
@@ -86,7 +86,7 @@
             <section class="welcome" id="welcome">
               <div class="welcome-mark"><span class="brand-mark big"></span></div>
               <h1>欢迎使用 Sapgir</h1>
-              <p>我可以帮你写代码、读文件、分析图片、写作各种创意内容，也可以联网查资料。兼容 DeepSeek Chat Completions / Messages 端点，使用你自己的 API Key。</p>
+              <p>我可以帮你写代码、读文件、分析图片、写作各种创意内容，也可以联网查资料。使用 DeepSeek Anthropic Messages 端点和服务端联网搜索，使用你自己的 API Key。</p>
 
               <div class="welcome-notice hidden" id="api-notice">
                 <div class="welcome-notice-text">
@@ -105,7 +105,7 @@
                   <span class="sug-icon" data-icon="zap"></span>
                   写一段代码
                 </button>
-                <button type="button" data-prompt="搜索今天的 AI 行业重要新闻，并总结要点" data-search="1">
+                <button type="button" data-prompt="搜索今天的 AI 行业重要新闻，并总结要点">
                   <span class="sug-icon" data-icon="globe"></span>
                   联网查最新资讯
                 </button>
@@ -115,7 +115,7 @@
                 </button>
               </div>
 
-              <div class="welcome-meta">兼容 DeepSeek 端点 · deepseek-flash · 深度思考 · 图片理解 · 联网</div>
+              <div class="welcome-meta">DeepSeek Messages 端点 · deepseek-flash · 深度思考 · 图片理解 · 服务端联网</div>
             </section>
 
             <div class="messages" id="messages"></div>
@@ -150,10 +150,6 @@
               <button class="chip" id="thinking-toggle" type="button" aria-pressed="false" title="深度思考">
                 <span data-icon="brain" data-size="16"></span>
                 <span>深度思考</span>
-              </button>
-              <button class="chip" id="search-toggle" type="button" aria-pressed="false" title="联网搜索">
-                <span data-icon="globe" data-size="16"></span>
-                <span>联网搜索</span>
               </button>
               <div class="composer-spacer"></div>
               <span class="send-hint" id="send-hint">Enter 发送</span>
@@ -198,7 +194,6 @@
           <nav class="settings-nav" id="settings-nav" aria-label="设置分类">
             <button type="button" data-tab="api" class="active">API 与模型</button>
             <button type="button" data-tab="chat">对话与工具</button>
-            <button type="button" data-tab="web">联网</button>
             <button type="button" data-tab="data">数据</button>
             <button type="button" data-tab="about">关于</button>
           </nav>
@@ -220,6 +215,7 @@
                 <span class="presets">
                   <button type="button" class="mini-btn" data-base="https://api.deepseek.com">DeepSeek 端点</button>
                 </span>
+                <span class="field-hint">固定使用 Anthropic Messages：{Base URL}/anthropic/v1/messages；填根地址即可。</span>
               </label>
 
               <label class="field">
@@ -276,16 +272,6 @@
                 <span class="switch"></span>
               </label>
               <label class="switch-row">
-                <span class="switch-copy"><b>新对话默认开启联网开关</b><small>开启后新对话的「联网搜索」默认处于手动开启状态；关闭时仍会按上下文自动判断（需开启「按上下文自动判断联网」）。</small></span>
-                <input type="checkbox" id="set-web-search" />
-                <span class="switch"></span>
-              </label>
-              <label class="switch-row">
-                <span class="switch-copy"><b>允许网页抓取</b><small>搜索后可以打开具体网页，读取完整正文。</small></span>
-                <input type="checkbox" id="set-allow-fetch" />
-                <span class="switch"></span>
-              </label>
-              <label class="switch-row">
                 <span class="switch-copy"><b>自动折叠思考过程</b><small>答案开始输出后收起思考内容。</small></span>
                 <input type="checkbox" id="set-fold-thinking" />
                 <span class="switch"></span>
@@ -303,8 +289,9 @@
 
               <div class="field-row">
                 <label class="field">
-                  <span class="field-label">搜索返回条数</span>
-                  <input id="set-search-count" type="number" min="1" max="20" />
+                  <span class="field-label">单轮最多搜索次数</span>
+                  <input id="set-search-count" type="number" min="2" max="8" />
+                  <span class="field-hint">服务端原生 web_search 的 max_uses。</span>
                 </label>
                 <label class="field">
                   <span class="field-label">温度（非思考模式）</span>
@@ -331,80 +318,13 @@
                   </select>
                 </label>
               </div>
-            </section>
-
-            <section class="settings-panel" data-panel="web" hidden>
-              <label class="switch-row">
-                <span class="switch-copy">
-                  <b>按上下文自动判断联网</b>
-                  <small>开启：命中最新、新闻、价格、版本等联网关键词时，即使输入框「联网搜索」关闭，也会先自动检索一次再回答；coding、翻译、写作或上下文已足够回答的追问不搜索。关闭：只由输入框「联网搜索」开关控制。</small>
-                </span>
-                <input type="checkbox" id="set-auto-search" />
-                <span class="switch"></span>
-              </label>
-
-              <label class="switch-row">
-                <span class="switch-copy">
-                  <b>使用 Messages 兼容端点（兼容模式）</b>
-                  <small>默认关闭：走 DeepSeek Chat Completions + DeepSeek Search，支持结构化结果、网页抓取和命中关键词的自动检索。开启：整轮走 /anthropic/v1/messages，联网时使用原生 web_search。</small>
-                </span>
-                <input type="checkbox" id="set-anthropic-search" />
-                <span class="switch"></span>
-              </label>
-
-              <label class="switch-row">
-                <span class="switch-copy">
-                  <b>只使用 DeepSeek Search</b>
-                  <small>开启后不参与多引擎轮换，只用 DeepSeek Search。关闭（默认）时，每次搜索会在 DeepSeek Search 和已填写 Key 的 Exa / Parallel / Tavily 之间随机轮换；当前引擎失败会再随机换一个，直到所有可用引擎都试过。Messages 兼容模式仍使用端点原生 web_search。</small>
-                </span>
-                <input type="checkbox" id="set-deepseek-only" />
-                <span class="switch"></span>
-              </label>
-
-              <label class="field">
-                <span class="field-label">Exa API Key（可选）</span>
-                <input id="set-key-exa" type="password" autocomplete="off" spellcheck="false" placeholder="在 dashboard.exa.ai 创建" />
-              </label>
-
-              <label class="field">
-                <span class="field-label">Parallel API Key（可选）</span>
-                <input id="set-key-parallel" type="password" autocomplete="off" spellcheck="false" placeholder="在 platform.parallel.ai 创建" />
-              </label>
-
-              <label class="field">
-                <span class="field-label">Tavily API Key（可选）</span>
-                <input id="set-key-tavily" type="password" autocomplete="off" spellcheck="false" placeholder="在 app.tavily.com 创建" />
-              </label>
-
-              <p class="field-hint">
-                第三方搜索使用你自己的 Key，并直接发送到对应 provider；请自行遵守其条款与计费规则。
-              </p>
-
-              <label class="field">
-                <span class="field-label">网页抓取方式（Chat 模式）</span>
-                <select id="set-fetch-mode">
-                  <option value="local">插件直接抓取</option>
-                  <option value="deepseek">DeepSeek Fetch API</option>
-                </select>
-              </label>
-
-              <label class="switch-row">
-                <span class="switch-copy"><b>网页抓取失败时回退 DeepSeek Fetch</b><small>本地抓取失败时改用 DeepSeek Fetch API；Messages 模式不提供网页抓取工具。</small></span>
-                <input type="checkbox" id="set-fallback-deepseek" />
-                <span class="switch"></span>
-              </label>
-              <label class="switch-row">
-                <span class="switch-copy"><b>允许抓取 localhost / 内网地址</b><small>默认禁止，避免模型访问本机或内网服务。</small></span>
-                <input type="checkbox" id="set-allow-private-fetch" />
-                <span class="switch"></span>
-              </label>
 
               <div class="settings-actions">
-                <button type="button" class="btn" id="test-search">测试搜索</button>
+                <button type="button" class="btn" id="test-search">测试联网搜索</button>
                 <span class="test-result" id="test-search-result"></span>
               </div>
               <p class="field-hint">
-                Chat 模式默认使用 DeepSeek Search（按成功请求计费）；Messages 兼容模式使用端点原生 web_search。网页抓取由扩展直接请求目标 URL 并转成 Markdown。
+                联网由服务端原生 web_search 执行；模型会根据问题自行决定是否搜索，客户端不再提供手动联网开关。
               </p>
             </section>
 
@@ -436,20 +356,19 @@
                 <span class="brand-mark big"></span>
                 <div>
                   <b>Sapgir</b>
-                  <span id="about-version">版本 1.2.0</span>
+                  <span id="about-version">版本 1.3.0</span>
                 </div>
               </div>
               <ul class="about-list">
-                <li><span data-icon="check"></span>自绘聊天界面，兼容 DeepSeek 端点</li>
+                <li><span data-icon="check"></span>自绘聊天界面，兼容 DeepSeek Anthropic Messages 端点</li>
                 <li><span data-icon="check"></span>使用自己的 API Key，无中转、无服务器</li>
                 <li><span data-icon="check"></span>支持 deepseek-flash 原生图片理解</li>
-                <li><span data-icon="check"></span>DeepSeek Search 与 Exa / Parallel / Tavily 多引擎轮换</li>
-                <li><span data-icon="check"></span>插件直接抓取网页并转为 Markdown</li>
+                <li><span data-icon="check"></span>服务端原生 web_search，模型自行决定是否联网</li>
                 <li><span data-icon="check"></span>深度思考、流式输出、Markdown、代码高亮</li>
                 <li><span data-icon="check"></span>对话历史本地保存，可导出 / 导入</li>
               </ul>
               <p class="field-hint">
-                本项目与 DeepSeek 官方无关，仅通过你配置的端点调用 DeepSeek 公开 API。搜索与网页抓取分别按 DeepSeek 或对应搜索 provider 的计费规则结算。
+                本项目与 DeepSeek 官方无关，仅通过你配置的端点调用 DeepSeek 公开 API。联网搜索由 DeepSeek 服务端执行，按 DeepSeek 的计费规则结算。
               </p>
               <p class="field-hint">
                 名字致敬俄罗斯诗人 Genrikh Sapgir（1928–1999）；本项目与其遗产/权利方无关。
@@ -504,8 +423,6 @@
     <script src="vendor/marked.min.js"></script>
     <script src="vendor/purify.min.js"></script>
     <script src="vendor/highlight.min.js"></script>
-    <script src="vendor/turndown.js"></script>
-    <script src="vendor/turndown-plugin-gfm.js"></script>
     <script src="vendor/katex/katex.min.js"></script>
     <script src="vendor/katex/auto-render.min.js"></script>
     <script type="module" src="js/app.js"></script>

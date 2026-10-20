@@ -10,8 +10,6 @@ This project bundles the following open-source libraries in `vendor/`:
 | [KaTeX](https://github.com/KaTeX/KaTeX) | MIT | Copyright (c) 2013-2024, Khan Academy |
 | KaTeX auto-render | MIT | Copyright (c) 2013-2024, Khan Academy |
 | KaTeX fonts (`vendor/katex/fonts/`) | SIL Open Font License 1.1 | Copyright (c) 2013-2024, Khan Academy |
-| [Turndown](https://github.com/mixmark-io/turndown) | MIT | Copyright (c) 2017-2025 Dom Christie |
-| [turndown-plugin-gfm](https://github.com/mixmark-io/turndown-plugin-gfm) | MIT | Copyright (c) 2017-2025 Dom Christie |
 
 Full license texts are included in [`LICENSES/`](LICENSES/). The libraries are
 included unmodified (minified distribution builds). KaTeX font

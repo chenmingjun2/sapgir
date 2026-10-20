@@ -3,10 +3,7 @@
  * back to localStorage so the UI can also be previewed as a plain web page.
  */
 
-import { normalizeSearchKeys } from './searchproviders.js';
-
 const PREFIX = 'dsv2.';
-const CONV_PREFIX = `${PREFIX}conv.`;
 
 const chromeStorage =
   typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local
@@ -50,7 +47,7 @@ export async function setItem(key, value) {
   localSetRaw(key, value);
 }
 
-export async function removeItem(key) {
+async function removeItem(key) {
   if (chromeStorage) {
     await chromeStorage.remove(PREFIX + key);
     return;
@@ -73,14 +70,6 @@ export async function getSessionItem(key, fallback = undefined) {
   }
 }
 
-export async function setSessionItem(key, value) {
-  if (chromeSession) {
-    await chromeSession.set({ [PREFIX + key]: value });
-    return;
-  }
-  sessionStorage.setItem(PREFIX + key, JSON.stringify(value));
-}
-
 export async function removeSessionItem(key) {
   if (chromeSession) {
     await chromeSession.remove(PREFIX + key);
@@ -93,16 +82,30 @@ export async function removeSessionItem(key) {
 /* Settings                                                            */
 /* ------------------------------------------------------------------ */
 
-export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 DeepSeek 端点（Chat Completions / Messages）的 AI 助手。请使用简体中文回答，除非用户使用其他语言或明确要求其他语言。
+export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 DeepSeek Anthropic Messages 端点的 AI 助手。请使用简体中文回答，除非用户使用其他语言或明确要求其他语言。
 
 回答要求：
 - 准确、清晰、有条理，适当使用 Markdown 排版（标题、列表、表格、代码块）。
 - 代码必须放在带语言标注的代码块中。
 - 不要编造事实、链接或数据；不确定时请直接说明，并建议用户核实。
-- 如果启用了联网工具，涉及实时信息、新闻、价格、版本等问题时优先搜索，而不是凭记忆回答。`;
+- 联网搜索由服务端控制；涉及实时信息、新闻、价格、版本等问题时，可以调用服务端 web_search，而不是凭记忆回答。`;
+
+/** Fields removed when the app switched to Anthropic-only. */
+const LEGACY_SETTINGS_KEYS = [
+  'settingsVersion',
+  'webSearch',
+  'autoSearch',
+  'allowFetch',
+  'searchBackend',
+  'searchProvider',
+  'searchKeys',
+  'webFetchMode',
+  'fallbackDeepSeek',
+  'allowPrivateFetch',
+  'autoTitle',
+];
 
 export const DEFAULT_SETTINGS = {
-  settingsVersion: 2,
   apiKey: '',
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-flash',
@@ -111,46 +114,19 @@ export const DEFAULT_SETTINGS = {
   thinkingEffort: 'high',
   maxTokens: 8192,
   temperature: 1.0,
-  webSearch: false,
-  autoSearch: true,
-  searchCount: 8,
-  allowFetch: true,
-  searchBackend: 'builtin',
-  searchProvider: 'auto',
-  searchKeys: { exa: '', parallel: '', tavily: '' },
-  webFetchMode: 'local',
-  fallbackDeepSeek: true,
-  allowPrivateFetch: false,
+  searchCount: 5,
   foldThinking: true,
   theme: 'auto',
   fontSize: 16,
   sendOnEnter: true,
   includeUsage: true,
-  autoTitle: true,
 };
 
 export async function loadSettings() {
   const saved = (await getItem('settings', {})) || {};
   const settings = { ...DEFAULT_SETTINGS, ...saved };
+  for (const key of LEGACY_SETTINGS_KEYS) delete settings[key];
 
-  // v2: Chat Completions + DeepSeek Search became the default. Migrate the old
-  // implicit default once; after that the user's explicit choice is preserved.
-  const savedVersion = Number(saved.settingsVersion) || 1;
-  if (savedVersion < 2 && saved.searchBackend === 'anthropic') {
-    settings.searchBackend = 'builtin';
-  }
-  settings.settingsVersion = 2;
-
-  if (!['anthropic', 'builtin'].includes(settings.searchBackend)) {
-    settings.searchBackend = 'builtin';
-  }
-  if (!['auto', 'deepseek'].includes(settings.searchProvider)) {
-    settings.searchProvider = 'auto';
-  }
-  settings.searchKeys = normalizeSearchKeys(settings.searchKeys);
-  if (!['local', 'deepseek'].includes(settings.webFetchMode)) {
-    settings.webFetchMode = 'local';
-  }
   if (typeof settings.maxTokens !== 'number' || Number.isNaN(settings.maxTokens)) {
     settings.maxTokens = DEFAULT_SETTINGS.maxTokens;
   }
@@ -166,26 +142,19 @@ export async function loadSettings() {
     settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   }
   // Migrate the old default personas to the Sapgir prompt.
-  if (/^你是 (DeepSeek|BYOK Chat)[，,]/.test(settings.systemPrompt)) {
+  if (
+    /^你是 (DeepSeek|BYOK Chat)[，,]/.test(settings.systemPrompt) ||
+    /^你是 Sapgir，一个兼容 DeepSeek 端点/.test(settings.systemPrompt)
+  ) {
     settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   }
   if (!['low', 'high', 'max'].includes(settings.thinkingEffort)) {
     settings.thinkingEffort = 'high';
   }
-  settings.searchCount = Math.min(20, Math.max(1, Number(settings.searchCount) || 8));
+  settings.searchCount = Math.min(8, Math.max(2, Number(settings.searchCount) || 5));
   settings.temperature = Math.min(2, Math.max(0, Number(settings.temperature)));
   if (!Number.isFinite(settings.temperature)) settings.temperature = 1;
-  for (const key of [
-    'thinking',
-    'webSearch',
-    'autoSearch',
-    'allowFetch',
-    'fallbackDeepSeek',
-    'allowPrivateFetch',
-    'foldThinking',
-    'includeUsage',
-    'sendOnEnter',
-  ]) {
+  for (const key of ['thinking', 'foldThinking', 'includeUsage', 'sendOnEnter']) {
     settings[key] = settings[key] !== false && settings[key] !== 'false';
   }
   return settings;
@@ -193,6 +162,7 @@ export async function loadSettings() {
 
 export async function saveSettings(settings) {
   const clean = { ...DEFAULT_SETTINGS, ...settings };
+  for (const key of LEGACY_SETTINGS_KEYS) delete clean[key];
   await setItem('settings', clean);
   return clean;
 }
@@ -231,16 +201,6 @@ export async function saveUiState(ui) {
   await setItem('ui', ui);
 }
 
-export async function listAllConversations() {
-  const index = await loadIndex();
-  const out = [];
-  for (const item of index) {
-    const convo = await loadConversation(item.id);
-    if (convo) out.push(convo);
-  }
-  return out;
-}
-
 export async function exportAll() {
   const settings = await loadSettings();
   const index = await loadIndex();
@@ -258,7 +218,6 @@ export async function exportAll() {
     settings: {
       ...settings,
       apiKey: '',
-      searchKeys: { exa: '', parallel: '', tavily: '' },
     },
     conversations,
   };
@@ -295,7 +254,6 @@ export async function importAll(data) {
       ...current,
       ...data.settings,
       apiKey: current.apiKey,
-      searchKeys: current.searchKeys,
     };
     await saveSettings(merged);
   }
@@ -323,5 +281,3 @@ export async function storageStats() {
   }
   return { conversations: index.length, messages };
 }
-
-export { CONV_PREFIX };

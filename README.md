@@ -1,6 +1,7 @@
 # Sapgir
 
-> 兼容 DeepSeek Chat Completions / Messages 端点的自带 Key AI 聊天扩展。  
+> 兼容 DeepSeek Anthropic Messages 端点的自带 Key AI 聊天扩展。
+>
 > 纯本地运行，无中转服务器、无遥测；不隶属于 DeepSeek 官方。
 
 <p align="center">
@@ -13,13 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/chat-websearch.png" width="49%" alt="联网搜索与参考来源（默认折叠）" />
-  <img src="screenshots/settings-web.png" width="49%" alt="联网设置" />
+  <img src="screenshots/chat-websearch.png" width="70%" alt="服务端联网搜索与参考来源（默认折叠）" />
 </p>
 
 <p align="center">
   <img src="screenshots/mobile-welcome.png" width="30%" alt="移动端" />
-  <img src="screenshots/settings.png" width="66%" alt="设置" />
 </p>
 
 ---
@@ -32,15 +31,13 @@
 
 ## 功能
 
-- **自带 API Key**：兼容 DeepSeek 端点和任意 OpenAI 兼容的 Base URL；支持自定义模型名、测试连接、查看可用模型。
-- **两种 DeepSeek 端点**：
-  - **Chat 模式（默认）**：`POST /chat/completions`，搜索默认在 DeepSeek Search 与已配置的 Exa / Parallel / Tavily 之间随机轮换；当前引擎失败会换下一个，直到可用列表用尽。也可用开关强制只走 DeepSeek Search。
-  - **Messages 兼容端点**：`POST /anthropic/v1/messages`，适合 Claude 生态、原生搜索一体化和长上下文。
+- **自带 API Key**：兼容 DeepSeek 的 Anthropic Messages 端点；支持自定义模型名、测试连接、查看可用模型。
+- **单一端点**：整轮对话固定走 `POST {baseUrl}/anthropic/v1/messages`，不再维护 Chat Completions / Messages 两套客户端。
+- **服务端原生联网**：请求中声明 Anthropic 原生 `web_search` 工具，搜索、网页抓取和正文注入都由 DeepSeek 服务端完成；模型自行决定是否搜索，客户端没有手动联网开关。
 - **默认 `deepseek-flash` 原生多模态**：上传 / 粘贴 / 拖拽图片（JPG、PNG、GIF、WebP），自动压缩后以 base64 发送；支持多图、图片预览大图、历史图片回放。
-- **按上下文联网**：默认自动判断是否需要搜索。命中最新/实时/新闻/价格/天气/版本等关键词时，即使联网开关关闭也会先自动检索一次；coding、翻译、写作、上下文已足够的追问不搜索。
-- **搜索与来源默认折叠**：搜索过程和参考来源放在回答上方，默认收起，点击标题展开，不挤占正文。
+- **搜索与来源默认折叠**：服务端搜索过程和参考来源放在回答上方，默认收起，点击标题展开，不挤占正文。
 - **深度思考**：开关、`low / high / max` 思考强度、实时展示思考过程与耗时，可自动折叠。
-- **append-only 上下文**：稳定 system 快照 + 隐藏工具调用记录，让同一对话的请求前缀保持不变，最大化 DeepSeek 的前缀缓存命中；用量区会显示「缓存 xx%」。
+- **稳定 system 快照**：对话开始时快照 system message，之后只追加可见消息，尽量保持请求前缀稳定，提高 DeepSeek 前缀缓存命中。
 - **完整 Markdown**：GFM 表格、任务列表、代码高亮、代码复制、引用链接、KaTeX 公式（`$$...$$`、`\(...\)`、`\[...\]`）。
 - **本地优先**：对话和设置保存在 `chrome.storage.local`，可导出 / 导入备份，导出文件不包含 API Key。
 - **附加能力**：文本文件附件、对话搜索、重命名、置顶、删除、Markdown 导出、右键菜单「用 AI 解释 / 总结页面」。
@@ -55,10 +52,10 @@
 4. 在工具栏固定扩展图标，点击图标即可打开聊天页。
 5. 首次打开会自动弹出设置：
    - **API Key**：在 [platform.deepseek.com](https://platform.deepseek.com/) 创建。
-   - **Base URL**：默认 `https://api.deepseek.com`。
+   - **Base URL**：默认 `https://api.deepseek.com`，填根地址即可；扩展会自动请求 `/anthropic/v1/messages`。
    - **模型**：默认 `deepseek-flash`（推荐，支持图片理解）。
    - 可点击 **测试连接** 验证 Key 和网络。
-   - **联网**：默认使用 **Chat 模式 + DeepSeek Search**；开启「按上下文自动判断联网」后，不需要每轮手动打开搜索。命中联网关键词时，即使输入框的联网开关关闭，也会先自动检索一次。想增加结果多样性，可在「联网」里填写 Exa / Parallel / Tavily 的 Key（默认多引擎轮换）；如果只想用 DeepSeek Search，打开「只使用 DeepSeek Search」开关。
+   - **对话与工具**：可设置单轮最多搜索次数，并点击 **测试联网搜索**。
    - 点击 **保存**。
 
 > 扩展页会在新标签页中打开；再次点击工具栏图标会聚焦已打开的页面，不会打断正在进行的对话。
@@ -80,12 +77,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - **发送**：`Enter` 发送，`Shift + Enter` 换行。可在设置中改为 `Ctrl/⌘ + Enter` 发送。
 - **深度思考**：输入框左侧的「深度思考」开关；思考过程会实时显示，回答开始后自动折叠。
-- **联网搜索**：默认按上下文判断。命中最新/实时/新闻/价格/版本等关键词时，即使输入框的「联网搜索」关闭，也会先自动检索一次，再把结果交给模型回答；模型仍可按需补充搜索或抓取原文。
-  - **Chat 模式（默认）**：整轮走 `/chat/completions`；搜索默认在 DeepSeek Search 与已配置的 Exa / Parallel / Tavily 之间随机轮换，失败会自动换下一个引擎；也可打开「只使用 DeepSeek Search」关闭轮换。抓取走本地 fetch + Fetch API 回退。
-  - **Messages 兼容端点**：整轮走 `/anthropic/v1/messages`。需要联网时使用 DeepSeek 原生 `web_search` 服务端工具，搜索和回答由同一个端点完成。
-  - 输入框的「联网搜索」是手动开关；想完全自动，保持它关闭。
-  - 搜索结果和「参考来源」默认折叠在回答上方；点击搜索摘要或来源标题可展开。
-- **网页抓取（Chat 模式）**：默认由插件直接请求 URL、用 Turndown 转成 Markdown；失败时可回退 DeepSeek Fetch API。Messages 模式不提供插件 `web_fetch`。
+- **联网搜索**：由服务端控制。输入框不再提供「联网搜索」开关；模型会根据问题自行决定是否调用原生 `web_search`。搜索次数和来源会显示在回答上方，默认折叠。
 - **图片**：点击回形针、直接粘贴截图，或把图片拖进页面；发送前可点击缩略图查看大图。
 - **文本文件**：支持 `.txt / .md / .json / .csv / .py / .js / .ts / .html / .css / .sql / .yaml` 等常见文本文件。
 - **对话管理**：侧边栏支持搜索、重命名、置顶、删除、导出 Markdown。
@@ -99,89 +91,66 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 模型与 API
 
-扩展有两条 DeepSeek 端点路径，由 **设置 → 联网 → 使用 Messages 兼容端点** 切换；默认是 Chat 模式。
-
-> 从旧版本升级时，如果之前保存的是 Messages 模式，会自动切换一次到 Chat 模式；仍可在设置里改回。
-
-**Chat 模式（默认）** 使用 OpenAI 兼容的 **Chat Completions**：
-
-```text
-POST {baseUrl}/chat/completions
-Authorization: Bearer <API_KEY>
-```
-
-**Messages 兼容模式** 使用 DeepSeek 的 Messages 兼容接口：
+扩展只使用 DeepSeek 的 Anthropic Messages 兼容接口：
 
 ```text
 POST {baseUrl}/anthropic/v1/messages
 x-api-key: <API_KEY>
 anthropic-version: 2023-06-01
+content-type: application/json
 ```
 
 - 默认模型：`deepseek-flash`（原生视觉理解、长上下文、支持工具调用）。
 - 也支持 `deepseek-v4-pro`、`deepseek-chat`、`deepseek-reasoner` 或自定义模型名。
-- Chat 模式思考参数：`thinking: { type: "enabled" | "disabled" }` + `reasoning_effort: "low" | "high" | "max"`。
-- Messages 模式思考参数：`thinking: { type: "enabled" | "disabled" }` + `output_config: { effort: "low" | "high" | "max" }`。
-- Chat 模式图片以 `image_url` + `data:image/...;base64,...` 发送；Messages 模式图片以 base64 image block 发送。
+- 思考参数：`thinking: { type: "enabled" | "disabled" }` + `output_config: { effort: "low" | "high" | "max" }`。
+- 非思考模式下可传 `temperature`。
+- 图片以 base64 image block 发送。
 
-### Append-only 上下文与缓存
+### 上下文与缓存
 
-- 对话开始时快照一条 system message，之后不再逐轮重写；
-- 每轮只追加新的 user / assistant 消息；
-- Chat 模式把工具调用和结果保存在隐藏 `toolTrace` 中，下一轮原样重放；
-- 最终 assistant 消息只保留最后一个子轮次的 content / reasoning。
+- 对话开始时快照一条 system message，之后不逐轮重写；
+- 每轮从可见的 user / assistant 消息重建历史；
+- 服务端 `web_search` 的 `server_tool_use` / `web_search_tool_result` 块不会跨轮重放；
+- 消息下方会显示类似 `缓存 77% · ↑2.9k ↓420` 的用量信息。
 
-消息下方会显示类似 `缓存 77% · ↑2.9k ↓420` 的用量信息。
+### 联网搜索
 
-> Messages 模式会从可见消息重建历史；原生 `web_search` 的服务端块不会跨轮重放。
+- 请求中声明原生工具：
 
-### 搜索实现
+  ```json
+  {
+    "type": "web_search_20250305",
+    "name": "web_search",
+    "max_uses": 5
+  }
+  ```
 
-**Chat 模式（默认）**
-
-- 搜索：默认 `POST {baseUrl}/v1/tools/search`（DeepSeek Search API）
-- 多引擎轮换：默认从已配置的引擎中随机选一个作为本轮引擎；如果搜索失败，再随机换一个尚未尝试的引擎，直到所有可用引擎都用尽。可在设置中打开「只使用 DeepSeek Search」关闭轮换。
-- 自动搜索：命中联网关键词且输入框开关关闭时，先用选中的搜索引擎预检索一次，把结果注入本轮上下文，再让模型回答；10 分钟内重新生成会复用上次结果，避免重复计费。
-- 抓取：本地 fetch + HTML → Markdown；失败回退 `POST /v1/tools/fetch`
-- 所有引擎都使用用户自己的 API Key：没有 keyless 模式，也不会伪装成其他客户端。
-
-**Messages 兼容模式**
-
-- 端点：DeepSeek `/anthropic/v1/messages`
-- 工具：`{"type":"web_search_20250305","name":"web_search","max_uses":N}`
-- 返回：流式 `thinking_delta` / `text_delta` / `server_tool_use` / `web_search_tool_result`
-- 来源从 `web_search_tool_result` 提取；搜索和最终回答由同一个端点完成。
-
-#### 网页抓取
-
-- 只接受 `http(s)`；`credentials: 'omit'`，不携带登录 Cookie。
-- 默认 30 秒超时、最大 5MB；只接受 HTML、纯文本、JSON、XML 等文本类型。
-- HTML 用 `DOMParser` + Turndown + GFM 转成 Markdown；移除 script/style/nav/footer 等，链接和图片转为绝对地址。
-- 默认禁止 `localhost` / 内网 IP；可在设置里允许。
-- 失败时自动回退 DeepSeek Fetch（可关闭）。
+- `max_uses` 由设置中的「单轮最多搜索次数」控制，范围 2–8。
+- 搜索、网页抓取和正文注入都在 DeepSeek 服务端完成；客户端只接收 `web_search_tool_result` 中的来源列表用于展示。
+- 不再调用 DeepSeek Search / Fetch 原始 API，也不接入 Exa / Parallel / Tavily 等第三方搜索 provider；没有 keyless 模式，也不会伪装成其他客户端。
+- 服务端搜索会按 DeepSeek 的计费规则结算，具体以官方文档和账单为准。
 
 ## 数据与隐私
 
-- API Key 与第三方搜索 Key 只保存在当前浏览器的 `chrome.storage.local`，不会发送到本项目自己的服务器。
-- 模型请求只发送到你填写的 **Base URL**（默认 `https://api.deepseek.com`）。
-- 搜索请求发送到 DeepSeek Search API；如果启用了 Exa / Parallel / Tavily，搜索 query 会直接发送到对应 provider。Messages 模式的搜索在 DeepSeek 端点内完成。
-- 网页抓取会直接请求目标站点，目标站点能看到你的 IP。
+- API Key 只保存在当前浏览器的 `chrome.storage.local`，不会发送到本项目自己的服务器。
+- 模型、图片、文件和联网搜索请求都只发送到你填写的 **Base URL**（默认 `https://api.deepseek.com`）。
+- 没有第三方搜索 provider，也没有本地网页抓取；搜索 query 和抓取都在 DeepSeek 端点内完成。
 - 没有自建服务器、没有统计上报、没有远程配置。
-- 导出的 JSON **不包含 API Key 或第三方搜索 Key**。
-- 本项目声明 `<all_urls>` 权限，用于自定义 Base URL、右键总结页面和本地网页抓取。
+- 导出的 JSON **不包含 API Key**。
+- 本项目声明 `<all_urls>` 权限，用于自定义 Base URL 和右键总结页面。
 
 > 本项目不是 DeepSeek 官方产品，与 DeepSeek 没有隶属或背书关系。DeepSeek 名称仅用于说明 API 兼容性。
 
 ## 已知限制
 
-- **模型请求必须配置端点 Key**：对话仍通过你填写的 DeepSeek / OpenAI 兼容端点；第三方搜索引擎的 Key 是可选的。
-- **Messages 模式无插件抓取**：该模式只有原生 `web_search`，需要抓取原文时切换到 Chat 模式。
-- **Messages 偶发未完成**：极少数情况下端点会以 `tool_use` / `pause_turn` 结束；当前会显示可重试错误。
-- **Chat 搜索轮次不固定**：命中关键词会先自动检索一次，但模型仍可能按需补充搜索；搜索次数和费用以实际请求为准。
+- **只支持 Anthropic Messages 端点**：仅提供 OpenAI Chat Completions 的兼容服务不能直接使用。
+- **联网由服务端决定**：客户端没有手动联网开关；模型可能选择不搜索，也可能在一轮内多次搜索。
+- **搜索依赖端点能力**：如果目标端点不支持 `web_search_20250305`，请求可能失败或忽略该工具。
+- **偶发未完成**：极少数情况下端点会以 `tool_use` / `pause_turn` 结束；当前会显示可重试错误。
+- **无客户端网页抓取**：不提供 `web_fetch`，需要读取特定 URL 时请直接把链接发给模型。
 - **PDF / Word 暂不解析**：目前支持图片和常见文本文件。
 - **GIF 会取首帧**。
 - **公式**：支持 `$$...$$`、`\(...\)`、`\[...\]`，不解析单美元 `$...$`。
-- **本地抓取限制**：Cloudflare、登录/付费墙、纯 JS 渲染页面可能抓不到正文。
 - **非官方项目**：与 DeepSeek 官方无关，DeepSeek 名称、Logo 与商标归深度求索所有。
 
 ## 开发
@@ -195,15 +164,7 @@ python3 -m http.server 8765
 # 打开 http://127.0.0.1:8765/app.html
 ```
 
-本地 Mock API：
-
-```bash
-node test/mock-server.mjs
-# 在设置里把 Base URL 改为 http://127.0.0.1:8766
-# Mock 支持 Chat Completions + Search/Fetch，不支持 Messages 端点
-```
-
-本地抓取测试页：`test/fetch-fixture.html`。
+> 仓库不再附带旧 Chat Completions 端点的 Mock。联调请使用真实的 Anthropic Messages 端点，或在本地自行搭一个返回 SSE 的 Mock。
 
 ### 目录结构
 
@@ -214,20 +175,17 @@ node test/mock-server.mjs
 ├── app.html               # 聊天主页面
 ├── styles/app.css         # 全部样式（自绘 UI）
 ├── js/
-│   ├── app.js             # UI 状态、侧边栏、流式渲染、终端模式
-│   ├── api.js             # Chat Completions + DeepSeek Search/Fetch
-│   ├── searchproviders.js # Exa / Parallel / Tavily（BYOK）与随机轮换
-│   ├── anthropic.js       # Messages 兼容整轮客户端、原生搜索、流式解析
-│   ├── websearch.js       # Messages 端点原生搜索测试
-│   ├── webfetch.js        # 本地抓取 + HTML → Markdown
+│   ├── app.js             # UI 状态、侧边栏、流式渲染、设置
+│   ├── api.js             # Base URL、模型列表、system message
+│   ├── anthropic.js       # Messages 客户端、原生 web_search、流式解析
+│   ├── http.js            # host / 超时 / 错误响应解析
 │   ├── storage.js         # chrome.storage.local
 │   ├── markdown.js        # Markdown、代码高亮、引用、KaTeX
 │   └── icons.js           # 内联图标
-├── vendor/                # marked / DOMPurify / highlight.js / KaTeX / Turndown
+├── vendor/                # marked / DOMPurify / highlight.js / KaTeX
 ├── assets/                # 原创图标
 ├── screenshots/           # README 截图
-├── android/               # Android WebView 壳（复用本目录前端代码）
-└── test/                  # Mock API 与抓取测试页
+└── android/               # Android WebView 壳（复用本目录前端代码）
 ```
 
 ### 第三方库
@@ -236,8 +194,6 @@ node test/mock-server.mjs
 - [DOMPurify](https://github.com/cure53/DOMPurify) — Apache-2.0 / MPL-2.0
 - [highlight.js](https://highlightjs.org/) — BSD-3-Clause
 - [KaTeX](https://katex.org/) — MIT；字体 SIL OFL 1.1
-- [Turndown](https://github.com/mixmark-io/turndown) — MIT
-- [turndown-plugin-gfm](https://github.com/mixmark-io/turndown-plugin-gfm) — MIT
 
 完整声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，许可证全文在 [`LICENSES/`](LICENSES/)。
 

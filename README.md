@@ -34,7 +34,7 @@
 
 - **自带 API Key**：兼容 DeepSeek 端点和任意 OpenAI 兼容的 Base URL；支持自定义模型名、测试连接、查看可用模型。
 - **两种 DeepSeek 端点**：
-  - **Chat 模式（默认）**：`POST /chat/completions`，搜索走 DeepSeek Search API，结果结构化、可抓取、成本可控。
+  - **Chat 模式（默认）**：`POST /chat/completions`，搜索默认在 DeepSeek Search 与已配置的 Exa / Parallel / Tavily 之间随机轮换；当前引擎失败会换下一个，直到可用列表用尽。也可用开关强制只走 DeepSeek Search。
   - **Messages 兼容端点**：`POST /anthropic/v1/messages`，适合 Claude 生态、原生搜索一体化和长上下文。
 - **默认 `deepseek-flash` 原生多模态**：上传 / 粘贴 / 拖拽图片（JPG、PNG、GIF、WebP），自动压缩后以 base64 发送；支持多图、图片预览大图、历史图片回放。
 - **按上下文联网**：默认自动判断是否需要搜索。命中最新/实时/新闻/价格/天气/版本等关键词时，即使联网开关关闭也会先自动检索一次；coding、翻译、写作、上下文已足够的追问不搜索。
@@ -58,7 +58,7 @@
    - **Base URL**：默认 `https://api.deepseek.com`。
    - **模型**：默认 `deepseek-flash`（推荐，支持图片理解）。
    - 可点击 **测试连接** 验证 Key 和网络。
-   - **联网**：默认使用 **Chat 模式 + DeepSeek Search**；开启「按上下文自动判断联网」后，不需要每轮手动打开搜索。命中联网关键词时，即使输入框的联网开关关闭，也会先自动检索一次。
+   - **联网**：默认使用 **Chat 模式 + DeepSeek Search**；开启「按上下文自动判断联网」后，不需要每轮手动打开搜索。命中联网关键词时，即使输入框的联网开关关闭，也会先自动检索一次。想增加结果多样性，可在「联网」里填写 Exa / Parallel / Tavily 的 Key（默认多引擎轮换）；如果只想用 DeepSeek Search，打开「只使用 DeepSeek Search」开关。
    - 点击 **保存**。
 
 > 扩展页会在新标签页中打开；再次点击工具栏图标会聚焦已打开的页面，不会打断正在进行的对话。
@@ -80,8 +80,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - **发送**：`Enter` 发送，`Shift + Enter` 换行。可在设置中改为 `Ctrl/⌘ + Enter` 发送。
 - **深度思考**：输入框左侧的「深度思考」开关；思考过程会实时显示，回答开始后自动折叠。
-- **联网搜索**：默认按上下文判断。命中最新/实时/新闻/价格/版本等关键词时，即使输入框的「联网搜索」关闭，也会先用 DeepSeek Search API 自动检索一次，再把结果交给模型回答；模型仍可按需补充搜索或抓取原文。
-  - **Chat 模式（默认）**：整轮走 `/chat/completions`；搜索走 DeepSeek Search API，抓取走本地 fetch + Fetch API 回退。
+- **联网搜索**：默认按上下文判断。命中最新/实时/新闻/价格/版本等关键词时，即使输入框的「联网搜索」关闭，也会先自动检索一次，再把结果交给模型回答；模型仍可按需补充搜索或抓取原文。
+  - **Chat 模式（默认）**：整轮走 `/chat/completions`；搜索默认在 DeepSeek Search 与已配置的 Exa / Parallel / Tavily 之间随机轮换，失败会自动换下一个引擎；也可打开「只使用 DeepSeek Search」关闭轮换。抓取走本地 fetch + Fetch API 回退。
   - **Messages 兼容端点**：整轮走 `/anthropic/v1/messages`。需要联网时使用 DeepSeek 原生 `web_search` 服务端工具，搜索和回答由同一个端点完成。
   - 输入框的「联网搜索」是手动开关；想完全自动，保持它关闭。
   - 搜索结果和「参考来源」默认折叠在回答上方；点击搜索摘要或来源标题可展开。
@@ -139,10 +139,11 @@ anthropic-version: 2023-06-01
 
 **Chat 模式（默认）**
 
-- 搜索：`POST {baseUrl}/v1/tools/search`（DeepSeek Search API）
-- 自动搜索：命中联网关键词且输入框开关关闭时，先用 Search API 预检索一次，把结果注入本轮上下文，再让模型回答；10 分钟内重新生成会复用上次结果，避免重复计费。
+- 搜索：默认 `POST {baseUrl}/v1/tools/search`（DeepSeek Search API）
+- 多引擎轮换：默认从已配置的引擎中随机选一个作为本轮引擎；如果搜索失败，再随机换一个尚未尝试的引擎，直到所有可用引擎都用尽。可在设置中打开「只使用 DeepSeek Search」关闭轮换。
+- 自动搜索：命中联网关键词且输入框开关关闭时，先用选中的搜索引擎预检索一次，把结果注入本轮上下文，再让模型回答；10 分钟内重新生成会复用上次结果，避免重复计费。
 - 抓取：本地 fetch + HTML → Markdown；失败回退 `POST /v1/tools/fetch`
-- 只使用 DeepSeek Search API / Messages 端点；只需一个 DeepSeek API Key。
+- 所有引擎都使用用户自己的 API Key：没有 keyless 模式，也不会伪装成其他客户端。
 
 **Messages 兼容模式**
 
@@ -161,19 +162,19 @@ anthropic-version: 2023-06-01
 
 ## 数据与隐私
 
-- API Key 只保存在当前浏览器的 `chrome.storage.local`，不会发送到本项目自己的服务器。
+- API Key 与第三方搜索 Key 只保存在当前浏览器的 `chrome.storage.local`，不会发送到本项目自己的服务器。
 - 模型请求只发送到你填写的 **Base URL**（默认 `https://api.deepseek.com`）。
-- 搜索请求发送到 DeepSeek Search API；Messages 模式的搜索在 DeepSeek 端点内完成。
+- 搜索请求发送到 DeepSeek Search API；如果启用了 Exa / Parallel / Tavily，搜索 query 会直接发送到对应 provider。Messages 模式的搜索在 DeepSeek 端点内完成。
 - 网页抓取会直接请求目标站点，目标站点能看到你的 IP。
 - 没有自建服务器、没有统计上报、没有远程配置。
-- 导出的 JSON **不包含 API Key**。
+- 导出的 JSON **不包含 API Key 或第三方搜索 Key**。
 - 本项目声明 `<all_urls>` 权限，用于自定义 Base URL、右键总结页面和本地网页抓取。
 
 > 本项目不是 DeepSeek 官方产品，与 DeepSeek 没有隶属或背书关系。DeepSeek 名称仅用于说明 API 兼容性。
 
 ## 已知限制
 
-- **必须使用 DeepSeek API Key**：搜索与模型请求都通过 DeepSeek 端点。
+- **模型请求必须配置端点 Key**：对话仍通过你填写的 DeepSeek / OpenAI 兼容端点；第三方搜索引擎的 Key 是可选的。
 - **Messages 模式无插件抓取**：该模式只有原生 `web_search`，需要抓取原文时切换到 Chat 模式。
 - **Messages 偶发未完成**：极少数情况下端点会以 `tool_use` / `pause_turn` 结束；当前会显示可重试错误。
 - **Chat 搜索轮次不固定**：命中关键词会先自动检索一次，但模型仍可能按需补充搜索；搜索次数和费用以实际请求为准。
@@ -215,6 +216,7 @@ node test/mock-server.mjs
 ├── js/
 │   ├── app.js             # UI 状态、侧边栏、流式渲染、终端模式
 │   ├── api.js             # Chat Completions + DeepSeek Search/Fetch
+│   ├── searchproviders.js # Exa / Parallel / Tavily（BYOK）与随机轮换
 │   ├── anthropic.js       # Messages 兼容整轮客户端、原生搜索、流式解析
 │   ├── websearch.js       # Messages 端点原生搜索测试
 │   ├── webfetch.js        # 本地抓取 + HTML → Markdown

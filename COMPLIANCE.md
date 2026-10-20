@@ -56,7 +56,7 @@
 
 #### 2. Keyless 搜索 provider / 伪装 OpenCode
 
-**当前状态：** 已移除所有第三方搜索 provider、keyless 调用、伪装 OpenCode UA 和 Service Worker 搜索代理；Chat 模式只使用 DeepSeek Search API，Messages 模式只使用 DeepSeek 兼容端点。
+**当前状态：** 已移除所有 keyless 调用、伪装 OpenCode UA 和 Service Worker 搜索代理。2026-10-20 起，Chat 模式在 DeepSeek Search 基础上增加了 BYOK 的 Exa / Parallel / Tavily 多引擎轮换：每个引擎只使用用户自己在该 provider 申请的 API Key，没有任何共享凭证、伪装头或 keyless 路径；未配置 Key 的引擎不参与轮换。当前引擎失败时会按随机顺序尝试其余已配置引擎，直到列表用尽；另有开关可强制只使用 DeepSeek Search。Messages 模式只使用 DeepSeek 兼容端点。
 
 **位置：**
 

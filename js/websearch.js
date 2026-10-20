@@ -5,18 +5,11 @@
  * Chat Completions mode uses DeepSeek's Search API instead (see api.js).
  */
 
+import { providerLabel } from './searchproviders.js';
+
+export { providerLabel };
+
 const DEFAULT_TIMEOUT = 60000;
-
-const PROVIDER_LABELS = {
-  messages: 'Messages 端点',
-  anthropic: 'Messages 端点',
-  deepseek: 'DeepSeek Search',
-  local: '本地抓取',
-};
-
-export function providerLabel(id) {
-  return PROVIDER_LABELS[id] || id || 'Search';
-}
 
 function hostOf(url) {
   try {

@@ -393,6 +393,10 @@ function cacheDom() {
 
   dom.setAnthropicSearch = $('set-anthropic-search');
   dom.setAutoSearch = $('set-auto-search');
+  dom.setDeepseekOnly = $('set-deepseek-only');
+  dom.setKeyExa = $('set-key-exa');
+  dom.setKeyParallel = $('set-key-parallel');
+  dom.setKeyTavily = $('set-key-tavily');
   dom.setFetchMode = $('set-fetch-mode');
   dom.setFallbackDeepSeek = $('set-fallback-deepseek');
   dom.setAllowPrivateFetch = $('set-allow-private-fetch');
@@ -1552,6 +1556,17 @@ async function runAnthropicAssistantTurn(run, { systemMessage, useThinking, useT
   }
 }
 
+function searchRequestOptions(run) {
+  const last = [...(run.toolEntries || [])]
+    .reverse()
+    .find((entry) => entry.name === 'web_search' && entry.provider);
+  return {
+    searchProvider: state.settings.searchProvider || 'auto',
+    searchKeys: state.settings.searchKeys || {},
+    lastSearchProvider: last?.provider || run.convo?.lastSearchProvider || '',
+  };
+}
+
 /**
  * Keyword-triggered search. Unlike the normal model-driven tool loop this runs
  * before the first model request, so "最新/新闻/价格" questions still get
@@ -1567,7 +1582,7 @@ async function runAutoSearch(run, { query, count, oriQuestion }) {
     links: [],
     error: null,
     meta: null,
-    provider: 'deepseek',
+    provider: '',
     auto: true,
   };
   run.toolEntries.push(entry);
@@ -1592,12 +1607,14 @@ async function runAutoSearch(run, { query, count, oriQuestion }) {
       webFetchMode: state.settings.webFetchMode,
       fallbackDeepSeek: state.settings.fallbackDeepSeek,
       allowPrivateFetch: state.settings.allowPrivateFetch,
+      ...searchRequestOptions(run),
     });
 
     entry.status = 'ok';
     entry.count = out.meta?.count ?? out.sources?.length ?? 0;
     entry.meta = out.meta || null;
     entry.provider = out.meta?.provider || 'deepseek';
+    if (out.meta?.provider) run.convo.lastSearchProvider = out.meta.provider;
     entry.links = (out.sources || [])
       .filter((source) => source?.url)
       .slice(0, 6)
@@ -1629,6 +1646,7 @@ async function runAutoSearch(run, { query, count, oriQuestion }) {
 function reuseAutoSearch(run, userMsg) {
   const sources = Array.isArray(userMsg.searchSources) ? userMsg.searchSources : [];
   if (!sources.length || !userMsg.searchContext) return false;
+  const provider = userMsg.searchProvider || 'deepseek';
 
   const entry = {
     id: uid('tool'),
@@ -1647,10 +1665,10 @@ function reuseAutoSearch(run, userMsg) {
     meta: {
       query: userMsg.searchQuery || '',
       count: sources.length,
-      provider: 'deepseek',
+      provider,
       reused: true,
     },
-    provider: 'deepseek',
+    provider,
     auto: true,
     cached: true,
   };
@@ -1688,6 +1706,7 @@ async function ensureAutoSearch(run, userMsg, originalQuestion) {
   userMsg.searchContextAt = Date.now();
   userMsg.searchSources = out.sources;
   userMsg.searchQuery = query;
+  userMsg.searchProvider = out.meta?.provider || '';
 }
 
 async function runToolCall(run, call, originalQuestion) {
@@ -1733,11 +1752,13 @@ async function runToolCall(run, call, originalQuestion) {
       webFetchMode: state.settings.webFetchMode,
       fallbackDeepSeek: state.settings.fallbackDeepSeek,
       allowPrivateFetch: state.settings.allowPrivateFetch,
+      ...searchRequestOptions(run),
     });
     entry.status = 'ok';
     entry.count = out.meta?.count ?? out.sources?.length ?? 0;
     entry.meta = out.meta || null;
     entry.provider = out.meta?.provider || '';
+    if (out.meta?.provider) run.convo.lastSearchProvider = out.meta.provider;
     entry.links = (out.sources || [])
       .filter((s) => s?.url)
       .slice(0, 6)
@@ -2597,6 +2618,10 @@ function populateSettingsForm() {
   dom.setTemperature.value = String(s.temperature ?? 1);
   dom.setAnthropicSearch.checked = s.searchBackend !== 'builtin';
   dom.setAutoSearch.checked = s.autoSearch !== false;
+  dom.setDeepseekOnly.checked = s.searchProvider === 'deepseek';
+  dom.setKeyExa.value = s.searchKeys?.exa || '';
+  dom.setKeyParallel.value = s.searchKeys?.parallel || '';
+  dom.setKeyTavily.value = s.searchKeys?.tavily || '';
   dom.setFetchMode.value = s.webFetchMode || 'local';
   dom.setFallbackDeepSeek.checked = s.fallbackDeepSeek !== false;
   dom.setAllowPrivateFetch.checked = !!s.allowPrivateFetch;
@@ -2640,6 +2665,12 @@ async function saveSettingsFromForm() {
   next.temperature = clampFloat(dom.setTemperature.value, 0, 2, 1);
   next.searchBackend = dom.setAnthropicSearch.checked ? 'anthropic' : 'builtin';
   next.autoSearch = dom.setAutoSearch.checked;
+  next.searchProvider = dom.setDeepseekOnly.checked ? 'deepseek' : 'auto';
+  next.searchKeys = {
+    exa: dom.setKeyExa.value.trim(),
+    parallel: dom.setKeyParallel.value.trim(),
+    tavily: dom.setKeyTavily.value.trim(),
+  };
   next.webFetchMode = dom.setFetchMode.value === 'deepseek' ? 'deepseek' : 'local';
   next.fallbackDeepSeek = dom.setFallbackDeepSeek.checked;
   next.allowPrivateFetch = dom.setAllowPrivateFetch.checked;
@@ -2742,9 +2773,20 @@ async function testWebSearch() {
         apiKey,
         name: 'web_search',
         args: { query, count: 3 },
-        fallbackDeepSeek: false,
+        defaultCount: 3,
+        searchProvider: dom.setDeepseekOnly.checked ? 'deepseek' : 'auto',
+        searchKeys: {
+          exa: dom.setKeyExa.value.trim(),
+          parallel: dom.setKeyParallel.value.trim(),
+          tavily: dom.setKeyTavily.value.trim(),
+        },
       });
-      dom.testSearchResult.textContent = `DeepSeek Search · ${out.meta.count} 条 · ${
+      const used = providerLabel(out.meta?.provider);
+      const failed = Array.isArray(out.meta?.failedProviders) ? out.meta.failedProviders : [];
+      const fallback = failed.length
+        ? `（${failed.map(providerLabel).join(' / ')} 不可用，已回退）`
+        : '';
+      dom.testSearchResult.textContent = `${used} · ${out.meta.count} 条${fallback} · ${
         out.sources[0]?.title || '无结果'
       }`;
     }
@@ -3376,9 +3418,24 @@ function applyPromptToComposer(text) {
   dom.composer.setSelectionRange(text.length, text.length);
 }
 
+function applyAppVersion() {
+  const el = $('about-version');
+  if (!el) return;
+  try {
+    const version =
+      typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest
+        ? chrome.runtime.getManifest().version
+        : '';
+    if (version) el.textContent = `版本 ${version}`;
+  } catch (_) {
+    /* keep the static fallback */
+  }
+}
+
 async function init() {
   cacheDom();
   hydrateIcons();
+  applyAppVersion();
 
   state.settings = await loadSettings();
   state.index = await loadIndex();

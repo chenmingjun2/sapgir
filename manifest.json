@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sapgir",
   "short_name": "Sapgir",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "兼容 DeepSeek Chat Completions / Messages 端点的自带 Key AI 聊天客户端。",
   "minimum_chrome_version": "116",
   "action": {

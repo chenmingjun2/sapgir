@@ -3,6 +3,8 @@
  * back to localStorage so the UI can also be previewed as a plain web page.
  */
 
+import { normalizeSearchKeys } from './searchproviders.js';
+
 const PREFIX = 'dsv2.';
 const CONV_PREFIX = `${PREFIX}conv.`;
 
@@ -114,6 +116,8 @@ export const DEFAULT_SETTINGS = {
   searchCount: 8,
   allowFetch: true,
   searchBackend: 'builtin',
+  searchProvider: 'auto',
+  searchKeys: { exa: '', parallel: '', tavily: '' },
   webFetchMode: 'local',
   fallbackDeepSeek: true,
   allowPrivateFetch: false,
@@ -140,9 +144,10 @@ export async function loadSettings() {
   if (!['anthropic', 'builtin'].includes(settings.searchBackend)) {
     settings.searchBackend = 'builtin';
   }
-  // Remove legacy provider fields from older backups/settings.
-  delete settings.searchProvider;
-  delete settings.searchKeys;
+  if (!['auto', 'deepseek'].includes(settings.searchProvider)) {
+    settings.searchProvider = 'auto';
+  }
+  settings.searchKeys = normalizeSearchKeys(settings.searchKeys);
   if (!['local', 'deepseek'].includes(settings.webFetchMode)) {
     settings.webFetchMode = 'local';
   }
@@ -253,6 +258,7 @@ export async function exportAll() {
     settings: {
       ...settings,
       apiKey: '',
+      searchKeys: { exa: '', parallel: '', tavily: '' },
     },
     conversations,
   };
@@ -289,9 +295,8 @@ export async function importAll(data) {
       ...current,
       ...data.settings,
       apiKey: current.apiKey,
+      searchKeys: current.searchKeys,
     };
-    delete merged.searchProvider;
-    delete merged.searchKeys;
     await saveSettings(merged);
   }
 }

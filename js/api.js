@@ -6,6 +6,11 @@
 
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_SETTINGS } from './storage.js';
 import { fetchPageLocal } from './webfetch.js';
+import {
+  planSearchProviders,
+  providerLabel,
+  searchWithProvider,
+} from './searchproviders.js';
 
 export function normalizeBase(input) {
   let base = String(input || '').trim() || DEFAULT_SETTINGS.baseUrl;
@@ -105,7 +110,7 @@ export function buildToolDefinitions(allowFetch = true) {
       function: {
         name: 'web_search',
         description:
-          '使用 DeepSeek 云端搜索引擎搜索实时网页。适用于新闻、价格、版本、人物、政策等可能超出你知识截止日期的问题。可多次调用。',
+          '联网搜索实时网页。适用于新闻、价格、版本、人物、政策等可能超出你知识截止日期的问题。搜索会在 DeepSeek Search、Exa、Parallel、Tavily 等已配置的搜索引擎之间随机轮换，可多次调用。',
         parameters: {
           type: 'object',
           properties: {
@@ -166,7 +171,7 @@ export function buildSessionSystemMessage(settings) {
   const extra = `\n\n当前日期：${dateText}。你的训练知识可能早于这个日期，涉及最新信息时不要凭空猜测。
 
 当本轮请求提供联网工具时，你可以调用：
-- web_search：搜索网页（由当前回答端点提供：DeepSeek Search 或 Messages 原生搜索）。
+- web_search：搜索网页（默认 DeepSeek Search；配置了 Exa / Parallel / Tavily Key 后会按轮随机切换）。
 - web_fetch：抓取指定网页的正文（仅 Chat 模式）。
 使用原则：需要实时或可核实的信息时先搜索；搜索摘要不够时抓取原文；不要编造搜索结果。搜索结果已经带有全局编号 [n]，引用时可以直接使用 [n]；也可以使用 Markdown 链接 [标题](URL) 的形式，并在正文中自然标注出处。如果本轮没有提供某个工具，请不要假装调用它。对于 coding、数学、翻译、写作、常识解释，或上下文已经足够回答的追问，不要为了搜索而搜索。`;
 
@@ -658,7 +663,7 @@ function sourceIndex(url, sourceOffset, existingUrls) {
 function formatSearchResults(
   results,
   query,
-  { sourceOffset = 0, existingUrls = [], provider = 'search' } = {}
+  { sourceOffset = 0, existingUrls = [], provider = 'search', fallbackFrom = '', failedProviders = [] } = {}
 ) {
   const known = new Set((existingUrls || []).filter(Boolean));
   const unique = [];
@@ -681,7 +686,7 @@ function formatSearchResults(
     return {
       text: `搜索“${query}”没有返回结果。可以更换关键词或使用更宽泛的查询。`,
       sources: [],
-      meta: { query, count: 0, provider },
+      meta: { query, count: 0, provider, fallbackFrom, failedProviders },
     };
   }
 
@@ -705,7 +710,7 @@ function formatSearchResults(
   return {
     text: `搜索“${query}”的结果（共 ${unique.length} 条）：\n\n${clip(text, 16000)}`,
     sources,
-    meta: { query, count: unique.length, provider },
+    meta: { query, count: unique.length, provider, fallbackFrom, failedProviders },
   };
 }
 
@@ -738,6 +743,8 @@ async function deepseekSearch({
   signal,
   sourceOffset,
   existingUrls,
+  fallbackFrom = '',
+  failedProviders = [],
 }) {
   const payload = { query, count, need_content: false };
   if (oriQuestion) payload.ori_question = String(oriQuestion).slice(0, 128);
@@ -769,6 +776,8 @@ async function deepseekSearch({
     sourceOffset,
     existingUrls,
     provider: 'deepseek',
+    fallbackFrom,
+    failedProviders,
   });
 }
 
@@ -813,21 +822,65 @@ export async function executeTool({
   webFetchMode = 'local',
   fallbackDeepSeek = true,
   allowPrivateFetch = false,
+  searchKeys = {},
+  searchProvider = 'auto',
+  lastSearchProvider = '',
 }) {
   if (name === 'web_search') {
     const query = String(args.query || '').trim();
     if (!query) throw new Error('搜索关键词为空');
     const count = Math.max(1, Math.min(20, Number(args.count) || defaultCount));
-    return deepseekSearch({
-      baseUrl,
-      apiKey,
-      query,
-      count,
-      oriQuestion,
-      signal,
-      sourceOffset,
-      existingUrls,
+    const attempts = planSearchProviders({
+      mode: searchProvider,
+      settings: { apiKey, searchKeys },
+      exclude: lastSearchProvider,
     });
+    if (!attempts.length) {
+      throw new Error('没有可用的搜索引擎：请填写 DeepSeek API Key，或配置 Exa / Parallel / Tavily Key。');
+    }
+
+    const failures = [];
+    for (let index = 0; index < attempts.length; index += 1) {
+      const provider = attempts[index];
+      const failedProviders = attempts.slice(0, index);
+      const fallbackFrom = failedProviders[0] || '';
+      try {
+        if (provider === 'deepseek') {
+          return await deepseekSearch({
+            baseUrl,
+            apiKey,
+            query,
+            count,
+            oriQuestion,
+            signal,
+            sourceOffset,
+            existingUrls,
+            fallbackFrom,
+            failedProviders,
+          });
+        }
+        const results = await searchWithProvider({
+          provider,
+          apiKey: searchKeys?.[provider],
+          query,
+          count,
+          oriQuestion,
+          signal,
+        });
+        return formatSearchResults(results, query, {
+          sourceOffset,
+          existingUrls,
+          provider,
+          fallbackFrom,
+          failedProviders,
+        });
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        failures.push(`${providerLabel(provider)}：${err?.message || err}`);
+      }
+    }
+
+    throw new Error(`搜索失败（已尝试 ${attempts.length} 个引擎）：${failures.join('；')}`);
   }
 
   if (name === 'web_fetch') {

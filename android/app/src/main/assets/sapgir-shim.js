@@ -172,4 +172,50 @@
 
   // Fallback hook used by js/storage.js when chrome.storage cannot be patched.
   window.__sapgirStorage = local;
+
+  // --- status bar / navigation bar follow the in-app theme ---------------
+  // The page theme is independent from the system uiMode (settings can force
+  // light/dark), so the native window has to be told whenever it changes.
+  var themeMedia = null;
+  try {
+    themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+  } catch (_) {
+    themeMedia = null;
+  }
+
+  function notifyTheme() {
+    var bridge = window.SapgirAndroid;
+    if (!bridge || typeof bridge.setTheme !== 'function') return;
+    var declared = document.documentElement.getAttribute('data-theme');
+    var dark = declared ? declared === 'dark' : !!(themeMedia && themeMedia.matches);
+    try {
+      bridge.setTheme(dark);
+    } catch (_) {
+      /* bridge unavailable */
+    }
+  }
+
+  try {
+    new MutationObserver(notifyTheme).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class'],
+    });
+  } catch (_) {
+    /* MutationObserver unavailable */
+  }
+
+  if (themeMedia) {
+    var onSystemThemeChange = function () { setTimeout(notifyTheme, 0); };
+    if (typeof themeMedia.addEventListener === 'function') {
+      themeMedia.addEventListener('change', onSystemThemeChange);
+    } else if (typeof themeMedia.addListener === 'function') {
+      themeMedia.addListener(onSystemThemeChange);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', notifyTheme);
+  } else {
+    notifyTheme();
+  }
 })();

@@ -325,6 +325,25 @@ class MainActivity : ComponentActivity() {
      * page hands exported Markdown/JSON over to MediaStore instead.
      */
     inner class Bridge {
+        /**
+         * Called by sapgir-shim.js whenever the page theme changes. The app
+         * theme is independent from the system uiMode, so status/navigation
+         * bar icon colors must follow the page instead of the configuration.
+         */
+        @JavascriptInterface
+        fun setTheme(dark: Boolean) {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val background = if (dark) Color.parseColor("#131417") else Color.WHITE
+                rootView.setBackgroundColor(background)
+                webView.setBackgroundColor(background)
+                WindowInsetsControllerCompat(window, webView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
+
         @JavascriptInterface
         fun saveFile(fileName: String, mimeType: String, content: String): Boolean {
             return try {

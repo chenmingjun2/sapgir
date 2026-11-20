@@ -16,6 +16,7 @@ const storage = await import('../js/storage.js');
 
 const LEGACY_KEYS = [
   'settingsVersion',
+  'maxTokens',
   'autoSearch',
   'allowFetch',
   'searchBackend',
@@ -38,6 +39,7 @@ test('loadSettings removes legacy fields but keeps webSearch', async () => {
     JSON.stringify({
       apiKey: 'key',
       webSearch: false,
+      maxTokens: 8192,
       searchCount: 7,
       thinkingEffort: 'max',
       autoSearch: true,
@@ -67,6 +69,8 @@ test('saveSettings strips legacy fields', async () => {
     searchKeys: { exa: 'x' },
     searchCount: 5,
     thinkingEffort: 'high',
+    maxTokens: 8192,
+    settingsVersion: 2,
   });
   const raw = JSON.parse(localStorage.getItem('dsv2.settings'));
   assert.equal(raw.apiKey, 'secret');

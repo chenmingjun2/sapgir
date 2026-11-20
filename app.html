@@ -239,12 +239,6 @@
               </label>
 
               <label class="field">
-                <span class="field-label">最大输出 tokens</span>
-                <input id="set-max-tokens" type="number" min="0" max="393216" step="256" />
-                <span class="field-hint">0 表示使用服务端默认值。思考强度由输入框下方的「深度思考」按钮控制。</span>
-              </label>
-
-              <label class="field">
                 <span class="field-label">自定义系统提示词</span>
                 <textarea id="set-system-prompt" rows="7" spellcheck="false"></textarea>
                 <span class="field-hint">
@@ -276,7 +270,7 @@
                 <span class="switch"></span>
               </label>
               <label class="switch-row">
-                <span class="switch-copy"><b>显示 token 用量</b><small>在回答下方显示本次请求的 token 统计。</small></span>
+                <span class="switch-copy"><b>显示 token 用量与成本</b><small>在回答下方显示本次请求的 token 统计和 USD 估算成本。</small></span>
                 <input type="checkbox" id="set-include-usage" />
                 <span class="switch"></span>
               </label>

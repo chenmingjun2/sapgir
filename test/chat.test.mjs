@@ -85,7 +85,24 @@ test('streamChatTurn sends Chat Completions body with the right flags', async ()
   assert.deepEqual(captured.body.thinking, { type: 'enabled' });
   assert.equal(captured.body.reasoning_effort, 'low');
   assert.equal(captured.body.tools, undefined);
+  assert.equal('max_tokens' in captured.body, false);
   assert.deepEqual(captured.body.messages[0], { role: 'system', content: 'system prompt' });
+});
+
+test('streamChatTurn sends max_tokens only when it is positive', async () => {
+  let captured = null;
+  globalThis.fetch = async (url, init) => {
+    captured = { body: JSON.parse(init.body) };
+    return searchStream();
+  };
+  await streamChatTurn({
+    baseUrl: 'https://api.deepseek.com',
+    apiKey: 'test-key',
+    model: 'deepseek-flash',
+    messages: [{ role: 'user', content: 'hi' }],
+    maxTokens: 4096,
+  });
+  assert.equal(captured.body.max_tokens, 4096);
 });
 
 test('searchWeb returns sources from server tool calls', async () => {

@@ -18,12 +18,6 @@ function app() {
   return ctx;
 }
 
-function clampInt(value, min, max, fallback) {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
 function sanitizeBaseUrl(value) {
   const base = normalizeBase(value);
   try {
@@ -44,7 +38,6 @@ export function populateSettingsForm() {
   state.keyVisible = false;
   dom.setBaseUrl.value = s.baseUrl || DEFAULT_SETTINGS.baseUrl;
   dom.setModel.value = s.model || DEFAULT_SETTINGS.model;
-  dom.setMaxTokens.value = String(s.maxTokens ?? DEFAULT_SETTINGS.maxTokens);
   dom.setSystemPrompt.value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
   dom.setThinking.checked = !!s.thinking;
   dom.setWebSearch.checked = s.webSearch !== false;
@@ -83,7 +76,6 @@ export async function saveSettingsFromForm() {
   next.apiKey = dom.setApiKey.value.trim();
   next.baseUrl = baseUrl;
   next.model = dom.setModel.value.trim() || DEFAULT_SETTINGS.model;
-  next.maxTokens = clampInt(dom.setMaxTokens.value, 0, 393216, DEFAULT_SETTINGS.maxTokens);
   next.systemPrompt = dom.setSystemPrompt.value.trim() || DEFAULT_SYSTEM_PROMPT;
   next.thinking = dom.setThinking.checked;
   next.webSearch = dom.setWebSearch.checked;

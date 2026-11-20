@@ -136,7 +136,9 @@ export async function streamChatTurn({
   messages,
   thinking = true,
   effort = 'high',
-  maxTokens = 8192,
+  // The chat UI always leaves this at 0 (omit max_tokens). Internal one-shot
+  // helpers such as searchWeb() may set a small cap.
+  maxTokens = 0,
   webSearch = true,
   signal,
   onText,
@@ -156,8 +158,8 @@ export async function streamChatTurn({
       : messages || [],
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: maxTokens > 0 ? maxTokens : 8192,
   };
+  if (maxTokens > 0) body.max_tokens = maxTokens;
 
   body.thinking = { type: thinking ? 'enabled' : 'disabled' };
   if (thinking) body.reasoning_effort = normalizeEffort(effort);

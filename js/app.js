@@ -27,6 +27,7 @@ import { buildSessionSystemMessage } from './api.js';
 
 import { renderMarkdown, copyText } from './markdown.js';
 import { buildChatMessages, streamChatTurn } from './chat.js';
+import { estimateCostUsd, formatCostUsd, isPeakTime } from './pricing.js';
 import { hostOf } from './http.js';
 import { addFiles, initAttachments, renderAttachments } from './attachments.js';
 import {
@@ -84,7 +85,7 @@ function formatNumber(n) {
   return String(n);
 }
 
-function formatUsage(usage) {
+function formatUsage(usage, model, at, baseUrl) {
   if (!usage) return '';
   const input = usage.prompt_tokens ?? 0;
   const output = usage.completion_tokens ?? 0;
@@ -100,10 +101,13 @@ function formatUsage(usage) {
     parts.push(`缓存 ${Math.round((hit / denominator) * 100)}%`);
   }
   parts.push(`↑${formatNumber(input)} ↓${formatNumber(output)}`);
+  const cost = estimateCostUsd({ model, usage, at, baseUrl });
+  const costText = formatCostUsd(cost);
+  if (costText) parts.push(costText.startsWith('<') ? costText : `≈${costText}`);
   return parts.join(' · ');
 }
 
-function usageTitle(usage) {
+function usageTitle(usage, model, at, baseUrl) {
   if (!usage) return '';
   const input = usage.prompt_tokens ?? 0;
   const output = usage.completion_tokens ?? 0;
@@ -116,7 +120,12 @@ function usageTitle(usage) {
     hit || miss
       ? ` · 缓存命中 ${hit} tokens / 未命中 ${miss} tokens`
       : '';
-  return `输入 ${input} tokens · 输出 ${output} tokens · 共 ${total} tokens${cache}`;
+  const cost = estimateCostUsd({ model, usage, at, baseUrl });
+  const costText = formatCostUsd(cost);
+  const costNote = costText
+    ? ` · 估算成本 ${costText}（${isPeakTime(at) ? '高峰价' : '非高峰价'}，未计中国节假日）`
+    : '';
+  return `输入 ${input} tokens · 输出 ${output} tokens · 共 ${total} tokens${cache}${costNote}`;
 }
 
 function fileSize(bytes) {
@@ -241,7 +250,6 @@ function cacheDom() {
   dom.setBaseUrl = $('set-base-url');
   dom.setModel = $('set-model');
   dom.modelPresets = $('model-presets');
-  dom.setMaxTokens = $('set-max-tokens');
   dom.setSystemPrompt = $('set-system-prompt');
   dom.resetPrompt = $('reset-prompt');
   dom.testConnection = $('test-connection');
@@ -807,8 +815,11 @@ function renderAssistantMessage(msg, { isLast = false } = {}) {
 
   if (msg.usage && state.settings?.includeUsage !== false) {
     const usageEl = el.querySelector('.usage');
-    usageEl.textContent = formatUsage(msg.usage);
-    usageEl.title = usageTitle(msg.usage);
+    const model = msg.model || state.settings.model;
+    const at = msg.createdAt || Date.now();
+    const baseUrl = msg.baseUrl || state.settings.baseUrl;
+    usageEl.textContent = formatUsage(msg.usage, model, at, baseUrl);
+    usageEl.title = usageTitle(msg.usage, model, at, baseUrl);
   }
 
   if (msg.error) {
@@ -1193,26 +1204,54 @@ function annotationSources(annotations) {
   return out;
 }
 
-function getConversationSystemMessage(convo, settings, webSearch = true) {
-  const now = new Date();
-  const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+const SYSTEM_MESSAGE_VERSION = 2;
+
+function getConversationSystemMessage(convo, settings) {
   const promptSignature = settings.systemPrompt || '';
   const stale =
     !convo.systemMessage ||
     typeof convo.systemMessage !== 'string' ||
-    convo.systemDateKey !== dateKey ||
     convo.systemPromptSignature !== promptSignature ||
-    convo.systemWebSearch !== webSearch;
+    convo.systemVersion !== SYSTEM_MESSAGE_VERSION;
 
   if (stale) {
     // Changing the system message changes the whole prefix, so this is an
     // intentional (rare) cache miss.
-    convo.systemMessage = buildSessionSystemMessage(settings, { webSearch }).content;
-    convo.systemDateKey = dateKey;
+    convo.systemMessage = buildSessionSystemMessage(settings).content;
     convo.systemPromptSignature = promptSignature;
-    convo.systemWebSearch = webSearch;
+    convo.systemVersion = SYSTEM_MESSAGE_VERSION;
   }
   return convo.systemMessage;
+}
+
+/**
+ * Keep the system prefix stable across days. The date lives in the latest
+ * user message, so a new day only changes the tail of the request instead of
+ * invalidating the cached system + history prefix.
+ */
+function addCurrentDate(messages) {
+  const dateText = new Date().toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  });
+  const prefix = `当前日期：${dateText}。\n\n`;
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role !== 'user') continue;
+    const content = messages[i].content;
+    if (typeof content === 'string') {
+      messages[i] = { ...messages[i], content: prefix + content };
+    } else if (Array.isArray(content)) {
+      messages[i] = {
+        ...messages[i],
+        content: [{ type: 'text', text: prefix }, ...content],
+      };
+    }
+    break;
+  }
+  return messages;
 }
 
 async function runAssistantTurn() {
@@ -1234,6 +1273,7 @@ async function runAssistantTurn() {
     toolRuns: [],
     createdAt: Date.now(),
     model: settings.model,
+    baseUrl: settings.baseUrl,
     usage: null,
     error: null,
     stopped: false,
@@ -1269,12 +1309,12 @@ async function runAssistantTurn() {
   assistantEl.querySelector('.pending-hint')?.classList.remove('hidden');
   requestAnimationFrame(() => scrollToBottom(true, true));
 
-  const systemMessage = getConversationSystemMessage(convo, settings, useWebSearch);
+  const systemMessage = getConversationSystemMessage(convo, settings);
   let error = null;
   let aborted = false;
 
   try {
-    const messages = buildChatMessages(convo.messages.slice(0, -1));
+    const messages = addCurrentDate(buildChatMessages(convo.messages.slice(0, -1)));
     await streamChatTurn({
       baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
@@ -1284,7 +1324,6 @@ async function runAssistantTurn() {
       // Off is still a thinking mode; it just uses the low effort level.
       thinking: true,
       effort,
-      maxTokens: settings.maxTokens,
       webSearch: useWebSearch,
       signal: controller.signal,
       onText: (text) => handleDelta(run, { content: text }),
@@ -1353,7 +1392,7 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
   }
 
   if (!assistant.error && !assistant.stopped && run.finishReason === 'length') {
-    assistant.notice = '回答达到最大输出长度，可能被截断。可在设置中提高「最大输出 tokens」。';
+    assistant.notice = '回答达到服务端最大输出长度，可能被截断。';
   }
 
   const answer = run.el.querySelector('.answer');
@@ -1397,8 +1436,19 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
 
   const usageEl = run.el.querySelector('.usage');
   if (settings.includeUsage && assistant.usage && usageEl) {
-    usageEl.textContent = formatUsage(assistant.usage);
-    usageEl.title = usageTitle(assistant.usage);
+    const baseUrl = assistant.baseUrl || settings.baseUrl;
+    usageEl.textContent = formatUsage(
+      assistant.usage,
+      assistant.model,
+      assistant.createdAt,
+      baseUrl
+    );
+    usageEl.title = usageTitle(
+      assistant.usage,
+      assistant.model,
+      assistant.createdAt,
+      baseUrl
+    );
   }
 
   if (assistant.error) showError(run.el, assistant.error, { retry: true });

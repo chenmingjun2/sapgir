@@ -63,31 +63,17 @@ export async function listModels({ baseUrl, apiKey, signal }) {
  * so the prefix sent to the API does not change from turn to turn (context
  * caching is prefix-based).
  *
- * The search paragraph is conditional: when the user turns the web search
- * button off, the model must not be told that it has a search tool.
+ * Keep this text free of dates and other per-turn values. The current date is
+ * added to the latest user message by app.js instead, so changing it only
+ * affects the tail of the request.
  */
-export function buildSessionSystemMessage(settings, { webSearch = true } = {}) {
+export function buildSessionSystemMessage(settings) {
   const base = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
-  const now = new Date();
-  const dateText = now.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'long',
-  });
 
-  const searchText = webSearch
-    ? `
-
-本轮请求已提供服务端联网工具：
-- deepseek_web_search：由服务端执行的网页搜索，搜索、打开页面和正文抓取都在服务端完成，结果会直接进入你的上下文。
-使用原则：需要实时或可核实的信息时可以使用搜索；不要编造搜索结果。搜索结果带有引用信息，回答时请自然标注来源。对于 coding、数学、翻译、写作、常识解释，或上下文已经足够回答的追问，不要为了搜索而搜索。`
-    : `
-
-本轮请求没有提供联网搜索工具。不要声称已经搜索、不要编造搜索结果或链接；涉及实时信息时，请说明你无法联网核实。`;
+  const searchRule = `如果本轮请求提供了 deepseek_web_search 工具，需要实时或可核实的信息时可以使用它；搜索结果由服务端返回，不要编造。没有提供该工具时，不要声称已经搜索、不要编造搜索结果或链接。`;
 
   return {
     role: 'system',
-    content: `${base}\n\n当前日期：${dateText}。你的训练知识可能早于这个日期，涉及最新信息时不要凭空猜测。${searchText}`,
+    content: `${base}\n\n${searchRule}`,
   };
 }

@@ -93,6 +93,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 OpenAI Chat C
 /** Fields removed across earlier app revisions. */
 const LEGACY_SETTINGS_KEYS = [
   'settingsVersion',
+  'maxTokens',
   'autoSearch',
   'allowFetch',
   'searchBackend',
@@ -114,7 +115,6 @@ export const DEFAULT_SETTINGS = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   thinking: true,
   webSearch: true,
-  maxTokens: 8192,
   foldThinking: true,
   theme: 'auto',
   fontSize: 16,
@@ -128,10 +128,6 @@ export async function loadSettings() {
   const settings = { ...DEFAULT_SETTINGS, ...saved };
   for (const key of LEGACY_SETTINGS_KEYS) delete settings[key];
 
-  if (typeof settings.maxTokens !== 'number' || Number.isNaN(settings.maxTokens)) {
-    settings.maxTokens = DEFAULT_SETTINGS.maxTokens;
-  }
-  settings.maxTokens = Math.min(393216, Math.max(0, Math.round(settings.maxTokens)));
   if (!['auto', 'light', 'dark'].includes(settings.theme)) settings.theme = 'auto';
   settings.fontSize = Math.min(24, Math.max(12, Number(settings.fontSize) || 16));
   if (!settings.model || typeof settings.model !== 'string') settings.model = 'deepseek-flash';

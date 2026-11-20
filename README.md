@@ -32,7 +32,6 @@
 - **多模态**：上传 / 粘贴 / 拖拽图片（JPG、PNG、GIF、WebP），自动压缩后以 base64 发送；支持多图、大图预览和历史图片回放。
 - **稳定 system 快照**：对话开始时快照 system message，之后只追加可见消息，保持请求前缀稳定，提高前缀缓存命中。
 - **完整 Markdown**：GFM 表格、任务列表、代码高亮、代码复制、引用链接、KaTeX 公式（`$...$`、`$$...$$`、`\(...\)`、`\[...\]`）。
-- **成本估算**：每条回答下方显示 token 用量，并按公开单价估算本次请求的 USD 成本；第三方网关不显示成本。
 - **本地优先**：对话和设置保存在 `chrome.storage.local`，可导出 / 导入备份，导出文件不包含 API Key。
 - **附加能力**：文本文件附件、对话搜索、重命名、置顶、删除、Markdown 导出、右键菜单「用 AI 解释 / 总结页面」。
 
@@ -98,8 +97,7 @@ content-type: application/json
 - 思考参数：始终 `thinking: { type: "enabled" }`；按钮关闭时 `reasoning_effort: "low"`，开启时 `reasoning_effort: "max"`。
 - 图片以 base64 `image_url` content part 发送。
 - 联网开关开启时声明服务端工具 `deepseek_web_search`；关闭时不发送 `tools`。
-- 不发送 `max_tokens`，始终跟随服务端默认（思考模式下通常 64K，max 强度时 128K）。
-- 成本估算按公开单价和请求开始时的 UTC 时段计算，仅供参考；第三方网关不显示成本。
+- 默认不发送 `max_tokens`，始终跟随服务端默认（思考模式下通常 64K，max 强度时 128K）。
 
 ### 上下文与缓存
 
@@ -108,7 +106,7 @@ content-type: application/json
 - 切换「联网搜索」不会重建 system message，只改变本次请求是否声明 `deepseek_web_search`；
 - 每轮从可见的 user / assistant 消息重建历史，正常使用是追加式；
 - 服务端搜索的工具调用不会跨轮重放；
-- 消息下方会显示类似 `缓存 77% · ↑2.9k ↓420 · ≈$0.0042` 的用量与成本估算。
+- 消息下方会显示类似 `缓存 77% · ↑2.9k ↓420` 的用量信息。
 
 ### 联网搜索
 
@@ -176,7 +174,6 @@ npm test
 │   ├── app.js             # UI 状态、侧边栏、流式渲染、对话编排
 │   ├── api.js             # Base URL、模型列表、system message
 │   ├── chat.js            # Chat Completions 客户端、deepseek_web_search、流式解析
-│   ├── pricing.js         # 按公开单价估算单次请求的 USD 成本
 │   ├── settings-ui.js     # 设置表单、连接/搜索测试
 │   ├── attachments.js     # 图片压缩、文件读取、附件预览
 │   ├── tool-panel.js      # 搜索面板与参考来源渲染

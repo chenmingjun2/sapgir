@@ -27,7 +27,6 @@ import { buildSessionSystemMessage } from './api.js';
 
 import { renderMarkdown, copyText } from './markdown.js';
 import { buildChatMessages, streamChatTurn } from './chat.js';
-import { estimateCostUsd, formatCostUsd, isPeakTime } from './pricing.js';
 import { hostOf } from './http.js';
 import { addFiles, initAttachments, renderAttachments } from './attachments.js';
 import {
@@ -85,7 +84,7 @@ function formatNumber(n) {
   return String(n);
 }
 
-function formatUsage(usage, model, at, baseUrl) {
+function formatUsage(usage) {
   if (!usage) return '';
   const input = usage.prompt_tokens ?? 0;
   const output = usage.completion_tokens ?? 0;
@@ -101,13 +100,10 @@ function formatUsage(usage, model, at, baseUrl) {
     parts.push(`缓存 ${Math.round((hit / denominator) * 100)}%`);
   }
   parts.push(`↑${formatNumber(input)} ↓${formatNumber(output)}`);
-  const cost = estimateCostUsd({ model, usage, at, baseUrl });
-  const costText = formatCostUsd(cost);
-  if (costText) parts.push(costText.startsWith('<') ? costText : `≈${costText}`);
   return parts.join(' · ');
 }
 
-function usageTitle(usage, model, at, baseUrl) {
+function usageTitle(usage) {
   if (!usage) return '';
   const input = usage.prompt_tokens ?? 0;
   const output = usage.completion_tokens ?? 0;
@@ -120,12 +116,7 @@ function usageTitle(usage, model, at, baseUrl) {
     hit || miss
       ? ` · 缓存命中 ${hit} tokens / 未命中 ${miss} tokens`
       : '';
-  const cost = estimateCostUsd({ model, usage, at, baseUrl });
-  const costText = formatCostUsd(cost);
-  const costNote = costText
-    ? ` · 估算成本 ${costText}（${isPeakTime(at) ? '高峰价' : '非高峰价'}，未计中国节假日）`
-    : '';
-  return `输入 ${input} tokens · 输出 ${output} tokens · 共 ${total} tokens${cache}${costNote}`;
+  return `输入 ${input} tokens · 输出 ${output} tokens · 共 ${total} tokens${cache}`;
 }
 
 function fileSize(bytes) {
@@ -815,11 +806,8 @@ function renderAssistantMessage(msg, { isLast = false } = {}) {
 
   if (msg.usage && state.settings?.includeUsage !== false) {
     const usageEl = el.querySelector('.usage');
-    const model = msg.model || state.settings.model;
-    const at = msg.createdAt || Date.now();
-    const baseUrl = msg.baseUrl || state.settings.baseUrl;
-    usageEl.textContent = formatUsage(msg.usage, model, at, baseUrl);
-    usageEl.title = usageTitle(msg.usage, model, at, baseUrl);
+    usageEl.textContent = formatUsage(msg.usage);
+    usageEl.title = usageTitle(msg.usage);
   }
 
   if (msg.error) {
@@ -1273,7 +1261,6 @@ async function runAssistantTurn() {
     toolRuns: [],
     createdAt: Date.now(),
     model: settings.model,
-    baseUrl: settings.baseUrl,
     usage: null,
     error: null,
     stopped: false,
@@ -1427,7 +1414,7 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
 
   if (assistant.toolRuns.length) {
     renderToolPanel(run.el, assistant.toolRuns, {
-      open: run.toolEntries.some((e) => e.status === 'error'),
+      open: false,
       sources: assistant.sources,
     });
   }
@@ -1436,19 +1423,8 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
 
   const usageEl = run.el.querySelector('.usage');
   if (settings.includeUsage && assistant.usage && usageEl) {
-    const baseUrl = assistant.baseUrl || settings.baseUrl;
-    usageEl.textContent = formatUsage(
-      assistant.usage,
-      assistant.model,
-      assistant.createdAt,
-      baseUrl
-    );
-    usageEl.title = usageTitle(
-      assistant.usage,
-      assistant.model,
-      assistant.createdAt,
-      baseUrl
-    );
+    usageEl.textContent = formatUsage(assistant.usage);
+    usageEl.title = usageTitle(assistant.usage);
   }
 
   if (assistant.error) showError(run.el, assistant.error, { retry: true });

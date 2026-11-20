@@ -82,18 +82,17 @@ export async function removeSessionItem(key) {
 /* Settings                                                            */
 /* ------------------------------------------------------------------ */
 
-export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 DeepSeek Anthropic Messages 端点的 AI 助手。请使用简体中文回答，除非用户使用其他语言或明确要求其他语言。
+export const DEFAULT_SYSTEM_PROMPT = `你是 Sapgir，一个兼容 OpenAI Chat Completions 协议的 AI 助手。请使用简体中文回答，除非用户使用其他语言或明确要求其他语言。
 
 回答要求：
 - 准确、清晰、有条理，适当使用 Markdown 排版（标题、列表、表格、代码块）。
 - 代码必须放在带语言标注的代码块中。
 - 不要编造事实、链接或数据；不确定时请直接说明，并建议用户核实。
-- 联网搜索由服务端控制；涉及实时信息、新闻、价格、版本等问题时，可以调用服务端 web_search，而不是凭记忆回答。`;
+- 联网搜索由服务端执行；当输入框下方的「联网搜索」开启时，涉及实时信息、新闻、价格、版本等问题，可以调用服务端 deepseek_web_search，而不是凭记忆回答。`;
 
-/** Fields removed when the app switched to Anthropic-only. */
+/** Fields removed across earlier app revisions. */
 const LEGACY_SETTINGS_KEYS = [
   'settingsVersion',
-  'webSearch',
   'autoSearch',
   'allowFetch',
   'searchBackend',
@@ -103,6 +102,9 @@ const LEGACY_SETTINGS_KEYS = [
   'fallbackDeepSeek',
   'allowPrivateFetch',
   'autoTitle',
+  'thinkingEffort',
+  'searchCount',
+  'temperature',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -111,16 +113,15 @@ export const DEFAULT_SETTINGS = {
   model: 'deepseek-flash',
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   thinking: true,
-  thinkingEffort: 'high',
+  webSearch: true,
   maxTokens: 8192,
-  temperature: 1.0,
-  searchCount: 5,
   foldThinking: true,
   theme: 'auto',
   fontSize: 16,
   sendOnEnter: true,
   includeUsage: true,
 };
+
 
 export async function loadSettings() {
   const saved = (await getItem('settings', {})) || {};
@@ -144,17 +145,13 @@ export async function loadSettings() {
   // Migrate the old default personas to the Sapgir prompt.
   if (
     /^你是 (DeepSeek|BYOK Chat)[，,]/.test(settings.systemPrompt) ||
-    /^你是 Sapgir，一个兼容 DeepSeek 端点/.test(settings.systemPrompt)
+    /^你是 Sapgir，一个兼容 DeepSeek (?:端点|Anthropic Messages 端点|Chat Completions 端点)/.test(
+      settings.systemPrompt
+    )
   ) {
     settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   }
-  if (!['low', 'high', 'max'].includes(settings.thinkingEffort)) {
-    settings.thinkingEffort = 'high';
-  }
-  settings.searchCount = Math.min(8, Math.max(2, Number(settings.searchCount) || 5));
-  settings.temperature = Math.min(2, Math.max(0, Number(settings.temperature)));
-  if (!Number.isFinite(settings.temperature)) settings.temperature = 1;
-  for (const key of ['thinking', 'foldThinking', 'includeUsage', 'sendOnEnter']) {
+  for (const key of ['thinking', 'webSearch', 'foldThinking', 'includeUsage', 'sendOnEnter']) {
     settings[key] = settings[key] !== false && settings[key] !== 'false';
   }
   return settings;

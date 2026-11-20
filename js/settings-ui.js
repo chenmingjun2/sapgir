@@ -5,7 +5,7 @@
 
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, saveSettings } from './storage.js';
 import { listModels, normalizeBase } from './api.js';
-import { messagesSearch } from './anthropic.js';
+import { searchWeb } from './chat.js';
 
 let ctx = null;
 
@@ -20,12 +20,6 @@ function app() {
 
 function clampInt(value, min, max, fallback) {
   const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
-function clampFloat(value, min, max, fallback) {
-  const n = Number.parseFloat(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 }
@@ -50,15 +44,13 @@ export function populateSettingsForm() {
   state.keyVisible = false;
   dom.setBaseUrl.value = s.baseUrl || DEFAULT_SETTINGS.baseUrl;
   dom.setModel.value = s.model || DEFAULT_SETTINGS.model;
-  dom.setEffort.value = s.thinkingEffort || 'high';
   dom.setMaxTokens.value = String(s.maxTokens ?? DEFAULT_SETTINGS.maxTokens);
   dom.setSystemPrompt.value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
   dom.setThinking.checked = !!s.thinking;
+  dom.setWebSearch.checked = s.webSearch !== false;
   dom.setFoldThinking.checked = s.foldThinking !== false;
   dom.setIncludeUsage.checked = s.includeUsage !== false;
   dom.setSendOnEnter.checked = s.sendOnEnter !== false;
-  dom.setSearchCount.value = String(s.searchCount ?? 5);
-  dom.setTemperature.value = String(s.temperature ?? 1);
   dom.setTheme.value = s.theme || 'auto';
   dom.setFontSize.value = String(s.fontSize || 16);
   dom.testResult.textContent = '';
@@ -91,15 +83,13 @@ export async function saveSettingsFromForm() {
   next.apiKey = dom.setApiKey.value.trim();
   next.baseUrl = baseUrl;
   next.model = dom.setModel.value.trim() || DEFAULT_SETTINGS.model;
-  next.thinkingEffort = dom.setEffort.value;
   next.maxTokens = clampInt(dom.setMaxTokens.value, 0, 393216, DEFAULT_SETTINGS.maxTokens);
   next.systemPrompt = dom.setSystemPrompt.value.trim() || DEFAULT_SYSTEM_PROMPT;
   next.thinking = dom.setThinking.checked;
+  next.webSearch = dom.setWebSearch.checked;
   next.foldThinking = dom.setFoldThinking.checked;
   next.includeUsage = dom.setIncludeUsage.checked;
   next.sendOnEnter = dom.setSendOnEnter.checked;
-  next.searchCount = clampInt(dom.setSearchCount.value, 2, 8, 5);
-  next.temperature = clampFloat(dom.setTemperature.value, 0, 2, 1);
   next.theme = dom.setTheme.value;
   next.fontSize = Number(dom.setFontSize.value) || 16;
 
@@ -111,6 +101,7 @@ export async function saveSettingsFromForm() {
   }
   if (!state.convo) {
     state.thinkingOn = state.settings.thinking;
+    state.webSearchOn = state.settings.webSearch;
   }
 
   applyTheme();
@@ -183,12 +174,11 @@ export async function testWebSearch() {
   const model = dom.setModel.value.trim() || state.settings.model;
 
   await runSettingsTest(dom.testSearch, dom.testSearchResult, '正在搜索…', async () => {
-    const out = await messagesSearch({
+    const out = await searchWeb({
       baseUrl,
       apiKey,
       model,
-      query: 'DeepSeek 最新公告',
-      count: 3,
+      query: '最新公告',
     });
     return `服务端搜索 · ${out.sources.length} 个来源 · ${
       out.sources[0]?.title || '无结果'

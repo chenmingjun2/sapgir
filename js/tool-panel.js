@@ -146,7 +146,10 @@ export function renderToolPanel(el, entries, { open = false, sources = [] } = {}
     if (entry.provider) {
       const provider = document.createElement('span');
       provider.className = 'badge provider-badge';
-      provider.textContent = entry.provider === 'messages' ? '服务端搜索' : entry.provider;
+      provider.textContent =
+        entry.provider === 'messages' || entry.provider === 'chat'
+          ? '服务端搜索'
+          : entry.provider;
       headLine.appendChild(document.createTextNode(' '));
       headLine.appendChild(provider);
     }

@@ -16,7 +16,6 @@ const storage = await import('../js/storage.js');
 
 const LEGACY_KEYS = [
   'settingsVersion',
-  'webSearch',
   'autoSearch',
   'allowFetch',
   'searchBackend',
@@ -26,17 +25,21 @@ const LEGACY_KEYS = [
   'fallbackDeepSeek',
   'allowPrivateFetch',
   'autoTitle',
+  'thinkingEffort',
+  'searchCount',
+  'temperature',
 ];
 
 beforeEach(() => store.clear());
 
-test('loadSettings removes legacy Chat/search fields', async () => {
+test('loadSettings removes legacy fields but keeps webSearch', async () => {
   localStorage.setItem(
     'dsv2.settings',
     JSON.stringify({
       apiKey: 'key',
+      webSearch: false,
       searchCount: 7,
-      webSearch: true,
+      thinkingEffort: 'max',
       autoSearch: true,
       allowFetch: true,
       searchBackend: 'builtin',
@@ -51,19 +54,19 @@ test('loadSettings removes legacy Chat/search fields', async () => {
   );
 
   const settings = await storage.loadSettings();
-  assert.equal(settings.searchCount, 7);
+  assert.equal(settings.webSearch, false);
   for (const key of LEGACY_KEYS) {
     assert.equal(key in settings, false, `${key} should be removed`);
   }
-  assert.equal(settings.searchCount, 7);
 });
 
 test('saveSettings strips legacy fields', async () => {
   await storage.saveSettings({
     apiKey: 'secret',
-    webSearch: true,
     searchBackend: 'builtin',
     searchKeys: { exa: 'x' },
+    searchCount: 5,
+    thinkingEffort: 'high',
   });
   const raw = JSON.parse(localStorage.getItem('dsv2.settings'));
   assert.equal(raw.apiKey, 'secret');
@@ -72,15 +75,13 @@ test('saveSettings strips legacy fields', async () => {
   }
 });
 
+test('webSearch defaults to true', async () => {
+  const settings = await storage.loadSettings();
+  assert.equal(settings.webSearch, true);
+});
+
 test('exportAll never includes the API key', async () => {
   await storage.saveSettings({ apiKey: 'secret' });
   const data = await storage.exportAll();
   assert.equal(data.settings.apiKey, '');
-});
-
-test('loadSettings clamps native search max_uses to 2-8', async () => {
-  await storage.saveSettings({ searchCount: 99 });
-  assert.equal((await storage.loadSettings()).searchCount, 8);
-  await storage.saveSettings({ searchCount: 1 });
-  assert.equal((await storage.loadSettings()).searchCount, 2);
 });

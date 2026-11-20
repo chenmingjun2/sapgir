@@ -86,7 +86,7 @@ keytool -genkeypair -v -keystore sapgir-release.jks -alias sapgir \
 | --- | --- |
 | `chrome.storage.local` 不存在 | 注入 `app/src/main/assets/sapgir-shim.js`，用 IndexedDB 实现同一套异步 API；避免 localStorage 5 MB 配额被 base64 图片撑爆 |
 | `<a download>` / blob URL 无法导出 | `js/app.js` 的 `download()` 优先调用 `SapgirAndroid.saveFile()`，通过 MediaStore 写入 `下载/Sapgir/` |
-| CORS | 页面运行在 `https://appassets.androidplatform.net` 安全源；DeepSeek 端点已返回对应 `Access-Control-Allow-Origin`。**自建/第三方 OpenAI 兼容网关若不发 CORS 头，请求会被 WebView 拒绝**（扩展里靠 host permissions 绕过，WebView 没有这个能力） |
+| CORS | 页面运行在 `https://appassets.androidplatform.net` 安全源；默认服务端已返回对应 `Access-Control-Allow-Origin`。**自建/第三方 OpenAI 兼容网关若不发 CORS 头，请求会被 WebView 拒绝**（扩展里靠 host permissions 绕过，WebView 没有这个能力） |
 | 文件选择 | `WebChromeClient.onShowFileChooser` + SAF（`ACTION_OPEN_DOCUMENT`），支持多选，无需存储权限 |
 | 外链 | `shouldOverrideUrlLoading` 交给系统浏览器；应用内不加载远程页面 |
 | 返回键 | 先关 `<dialog>` / 侧边栏，再回退历史，最后退出 |

@@ -1,6 +1,6 @@
 /**
- * Markdown rendering with GFM, sanitization, code highlighting, copy buttons
- * and numbered citation links.
+ * Markdown rendering with GFM, sanitization, code highlighting, copy buttons,
+ * code language labels, numbered citation links and KaTeX math.
  */
 
 const markedLib = window.marked;
@@ -69,26 +69,36 @@ function enhanceTables(root) {
   });
 }
 
-function copyText(text) {
+/**
+ * Copy text with a clipboard fallback. Extension pages can reject
+ * navigator.clipboard.writeText (for example when the document is not focused),
+ * so always fall back to the hidden-textarea + execCommand path.
+ */
+export async function copyText(text) {
+  const value = String(text ?? '');
   if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-  return new Promise((resolve, reject) => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
     try {
-      document.execCommand('copy');
-      resolve();
-    } catch (err) {
-      reject(err);
-    } finally {
-      ta.remove();
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch (_) {
+      /* fall through to execCommand */
     }
-  });
+  }
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-1000px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  try {
+    const ok = document.execCommand('copy');
+    if (!ok) throw new Error('copy failed');
+  } finally {
+    ta.remove();
+  }
 }
 
 function enhanceCode(root, { highlight = true } = {}) {
@@ -129,17 +139,7 @@ function enhanceCode(root, { highlight = true } = {}) {
     button.type = 'button';
     button.className = 'code-copy';
     button.textContent = '复制';
-    button.addEventListener('click', async () => {
-      try {
-        await copyText(raw);
-        button.textContent = '已复制';
-        setTimeout(() => {
-          button.textContent = '复制';
-        }, 1500);
-      } catch (_) {
-        button.textContent = '复制失败';
-      }
-    });
+    button.setAttribute('aria-label', '复制代码');
     head.append(label, button);
     wrap.insertBefore(head, pre);
   });
@@ -152,44 +152,91 @@ function enhanceTaskLists(root) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Math                                                                */
+/* ------------------------------------------------------------------ */
+
 /**
- * Markdown strips the backslashes in \( \) and \[ \], so protect those
- * delimiters before parsing and restore them after sanitization. $$...$$ is
- * already stable and is left untouched.
+ * Protect LaTeX before Markdown parsing. Marked treats `_`, `*`, `\` and line
+ * breaks inside formulas as Markdown syntax, so math has to be replaced with
+ * opaque tokens first and restored after sanitization.
  */
 function protectMath(source, prefix, store) {
-  const parts = source.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
+  const add = (raw, tex, display) => {
+    const token = `@@${prefix}_${store.size}@@`;
+    store.set(token, { raw, tex: tex.trim(), display });
+    return token;
+  };
+
+  // Skip fenced and inline code. Math inside code must stay literal.
+  const parts = source.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g);
   return parts
     .map((part) => {
-      if (/^(```|~~~)/.test(part)) return part;
-      return part.replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g, (match) => {
-        const token = `@@${prefix}_${store.size}@@`;
-        store.set(token, match);
-        return token;
+      if (/^(```|~~~|`)/.test(part)) return part;
+
+      let out = part;
+      // Display math first.
+      out = out.replace(/\$\$([\s\S]+?)\$\$/g, (match, tex) => add(match, tex, true));
+      out = out.replace(/\\\[([\s\S]+?)\\\]/g, (match, tex) => add(match, tex, true));
+      // Inline math with explicit LaTeX delimiters.
+      out = out.replace(/\\\(([\s\S]+?)\\\)/g, (match, tex) => add(match, tex, false));
+      // Conservative single-dollar inline math. Currency like $5-$10, $0.15
+      // and "$5 和 $10" is rejected by isInlineMath().
+      out = out.replace(/(^|[^\\$])\$([^$\n]+?)\$(?!\d)/g, (match, lead, tex) => {
+        if (!isInlineMath(tex)) return match;
+        return lead + add(match.slice(lead.length), tex, false);
       });
+      return out;
     })
     .join('');
 }
 
-function restoreMath(root, prefix, store) {
+function isInlineMath(tex) {
+  if (!tex || tex !== tex.trim()) return false;
+  if (tex.length > 300) return false;
+  if (/^[\d.,\s]+$/.test(tex)) return false;
+  if (/[A-Za-z\\]/.test(tex)) return true;
+  if (/[=^_{}<>]/.test(tex)) return true;
+  return /\d\s*[+\-*/]\s*\d/.test(tex);
+}
+
+/**
+ * Replace math tokens with either KaTeX placeholders (render=true) or the
+ * original raw LaTeX (render=false, used during streaming).
+ */
+function restoreMath(root, prefix, store, { render = true } = {}) {
   if (!store.size) return;
+  const needle = `@@${prefix}_`;
+  const re = new RegExp(`@@${prefix}_(\\d+)@@`, 'g');
+  const canRender = render && typeof window.katex?.render === 'function';
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   while (walker.nextNode()) {
-    if (walker.currentNode.nodeValue.includes(`@@${prefix}_`)) {
-      nodes.push(walker.currentNode);
-    }
+    const value = walker.currentNode.nodeValue;
+    if (value && value.includes(needle)) nodes.push(walker.currentNode);
   }
-  const re = new RegExp(`@@${prefix}_(\\d+)@@`, 'g');
+
   for (const node of nodes) {
     const text = node.nodeValue;
     const frag = document.createDocumentFragment();
     let last = 0;
     let match;
+    re.lastIndex = 0;
     while ((match = re.exec(text)) !== null) {
-      if (match.index > last) frag.appendChild(document.createTextNode(text.slice(last, match.index)));
-      const raw = store.get(match[0]);
-      if (raw) frag.appendChild(document.createTextNode(raw));
+      if (match.index > last) {
+        frag.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+      const item = store.get(match[0]);
+      if (!item) continue;
+      if (canRender) {
+        const span = document.createElement('span');
+        span.className = 'math-tex';
+        span.dataset.tex = item.tex;
+        span.dataset.display = item.display ? '1' : '0';
+        frag.appendChild(span);
+      } else {
+        frag.appendChild(document.createTextNode(item.raw));
+      }
       last = match.index + match[0].length;
     }
     if (!last) continue;
@@ -197,6 +244,33 @@ function restoreMath(root, prefix, store) {
     node.parentNode.replaceChild(frag, node);
   }
 }
+
+function renderMath(root) {
+  if (typeof window.katex?.render !== 'function') return;
+  root.querySelectorAll('span.math-tex[data-tex]').forEach((el) => {
+    const tex = el.dataset.tex || '';
+    if (!tex) {
+      el.remove();
+      return;
+    }
+    try {
+      window.katex.render(tex, el, {
+        displayMode: el.dataset.display === '1',
+        throwOnError: false,
+        strict: false,
+        errorColor: '#d93843',
+      });
+    } catch (_) {
+      el.textContent = tex;
+    }
+    el.removeAttribute('data-tex');
+    el.removeAttribute('data-display');
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Citations                                                           */
+/* ------------------------------------------------------------------ */
 
 function addCitations(root, citations) {
   if (!Array.isArray(citations) || !citations.length) return;
@@ -206,7 +280,7 @@ function addCitations(root, citations) {
       if (!value || !value.includes('[')) return NodeFilter.FILTER_REJECT;
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
-      if (parent.closest('a, code, pre, .code-block')) return NodeFilter.FILTER_REJECT;
+      if (parent.closest('a, code, pre, .code-block, .katex')) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -249,7 +323,7 @@ function addCitations(root, citations) {
 /**
  * Render markdown to a sanitized HTML string.
  * @param {string} text
- * @param {{citations?: Array<{url:string,title?:string}>, highlight?: boolean}} opts
+ * @param {{citations?: Array<{url:string,title?:string}>, highlight?: boolean, math?: boolean}} opts
  */
 export function renderMarkdown(text, opts = {}) {
   const source = String(text || '').replace(/\r\n?/g, '\n');
@@ -288,37 +362,11 @@ export function renderMarkdown(text, opts = {}) {
   enhanceCode(root, { highlight: opts.highlight !== false });
   enhanceTaskLists(root);
   addCitations(root, opts.citations);
-  restoreMath(root, mathPrefix, mathStore);
+  restoreMath(root, mathPrefix, mathStore, { render: opts.math !== false });
+  if (opts.math !== false) renderMath(root);
 
   const container = document.createElement('div');
   container.appendChild(root);
 
-  // Render explicit LaTeX delimiters. Single-dollar math is intentionally not
-  // enabled so currency like "$0.15" is never parsed as a formula.
-  if (
-    opts.math !== false &&
-    (mathStore.size > 0 || source.includes('$$')) &&
-    typeof window.renderMathInElement === 'function'
-  ) {
-    try {
-      window.renderMathInElement(container, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '\\[', right: '\\]', display: true },
-          { left: '\\(', right: '\\)', display: false },
-        ],
-        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'button'],
-        ignoredClasses: ['code-block'],
-        throwOnError: false,
-        strict: false,
-        errorColor: '#d93843',
-      });
-    } catch (_) {
-      /* leave raw LaTeX if rendering fails */
-    }
-  }
-
   return container.innerHTML;
 }
-
-export { copyText };

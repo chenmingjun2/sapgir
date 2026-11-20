@@ -1,6 +1,6 @@
 /**
- * DeepSeek endpoint utilities: base URL normalization, model discovery, and
- * the session system prompt. The Messages client lives in anthropic.js.
+ * Chat Completions endpoint utilities: base URL normalization, model discovery,
+ * and the session system prompt. The streaming client lives in chat.js.
  */
 
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_SETTINGS } from './storage.js';
@@ -12,31 +12,26 @@ export function normalizeBase(input) {
   base = base.replace(/\/+$/, '');
   base = base.replace(/\/chat\/completions$/i, '');
   base = base.replace(/\/messages$/i, '');
-  // Accept the Anthropic-style base as well, e.g.
+  // Accept the old Anthropic-style base as well, e.g.
   // https://api.deepseek.com/anthropic/v1 -> https://api.deepseek.com
   base = base.replace(/\/anthropic(?:\/v1)?$/i, '');
   return base;
 }
 
-export function messagesEndpoint(baseUrl) {
-  const base = normalizeBase(baseUrl).replace(/\/v1$/i, '');
-  return `${base}/anthropic/v1/messages`;
-}
-
-function endpoint(baseUrl, path) {
-  return normalizeBase(baseUrl) + path;
+export function chatEndpoint(baseUrl) {
+  return `${normalizeBase(baseUrl)}/chat/completions`;
 }
 
 function friendlyError(status, serverMessage) {
   const detail = serverMessage ? `：${serverMessage}` : '';
   if (status === 400) return `请求参数有误${detail}`;
   if (status === 401) return 'API Key 无效或已过期，请在设置中检查。';
-  if (status === 402) return '账户余额不足，请前往 DeepSeek 开放平台充值。';
+  if (status === 402) return '账户余额不足，请前往服务提供方控制台充值。';
   if (status === 403) return `请求被拒绝${detail}`;
   if (status === 404) return `接口不存在（404），请检查 Base URL 是否正确${detail}`;
   if (status === 413) return '请求体过大，请减少图片数量或换用更小的图片。';
   if (status === 429) return '请求过于频繁，或已达到速率限制，请稍后重试。';
-  if (status >= 500) return `DeepSeek 服务暂时不可用（${status}），请稍后重试。`;
+  if (status >= 500) return `服务暂时不可用（${status}），请稍后重试。`;
   return `请求失败（${status}）${detail}`;
 }
 
@@ -44,7 +39,7 @@ export async function listModels({ baseUrl, apiKey, signal }) {
   if (!apiKey) throw new Error('请先填写 API Key');
   let res;
   try {
-    res = await fetch(endpoint(baseUrl, '/models'), {
+    res = await fetch(`${normalizeBase(baseUrl)}/models`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -65,10 +60,13 @@ export async function listModels({ baseUrl, apiKey, signal }) {
 
 /**
  * Build a session-stable system message. It is snapshotted on the conversation
- * so the prefix sent to the API does not change from turn to turn (DeepSeek
- * context caching is prefix-based).
+ * so the prefix sent to the API does not change from turn to turn (context
+ * caching is prefix-based).
+ *
+ * The search paragraph is conditional: when the user turns the web search
+ * button off, the model must not be told that it has a search tool.
  */
-export function buildSessionSystemMessage(settings) {
+export function buildSessionSystemMessage(settings, { webSearch = true } = {}) {
   const base = (settings.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
   const now = new Date();
   const dateText = now.toLocaleDateString('zh-CN', {
@@ -78,11 +76,18 @@ export function buildSessionSystemMessage(settings) {
     weekday: 'long',
   });
 
-  const extra = `\n\n当前日期：${dateText}。你的训练知识可能早于这个日期，涉及最新信息时不要凭空猜测。
+  const searchText = webSearch
+    ? `
 
 本轮请求已提供服务端联网工具：
-- web_search：由 DeepSeek 服务端执行的网页搜索，搜索和正文抓取都在服务端完成，结果会直接进入你的上下文。
-使用原则：需要实时或可核实的信息时可以使用搜索；不要编造搜索结果。搜索结果已经带有全局编号 [n]，引用时可以直接使用 [n]；也可以使用 Markdown 链接 [标题](URL) 的形式，并在正文中自然标注出处。对于 coding、数学、翻译、写作、常识解释，或上下文已经足够回答的追问，不要为了搜索而搜索。`;
+- deepseek_web_search：由服务端执行的网页搜索，搜索、打开页面和正文抓取都在服务端完成，结果会直接进入你的上下文。
+使用原则：需要实时或可核实的信息时可以使用搜索；不要编造搜索结果。搜索结果带有引用信息，回答时请自然标注来源。对于 coding、数学、翻译、写作、常识解释，或上下文已经足够回答的追问，不要为了搜索而搜索。`
+    : `
 
-  return { role: 'system', content: base + extra };
+本轮请求没有提供联网搜索工具。不要声称已经搜索、不要编造搜索结果或链接；涉及实时信息时，请说明你无法联网核实。`;
+
+  return {
+    role: 'system',
+    content: `${base}\n\n当前日期：${dateText}。你的训练知识可能早于这个日期，涉及最新信息时不要凭空猜测。${searchText}`,
+  };
 }

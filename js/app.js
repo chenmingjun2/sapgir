@@ -1,6 +1,6 @@
 /**
  * Sapgir
- * A self-contained AI chat UI compatible with DeepSeek endpoints.
+ * A self-contained AI chat UI compatible with Chat Completions endpoints.
  */
 
 import {
@@ -26,7 +26,7 @@ import {
 import { buildSessionSystemMessage } from './api.js';
 
 import { renderMarkdown, copyText } from './markdown.js';
-import { buildAnthropicMessages, streamAnthropicTurn } from './anthropic.js';
+import { buildChatMessages, streamChatTurn } from './chat.js';
 import { hostOf } from './http.js';
 import { addFiles, initAttachments, renderAttachments } from './attachments.js';
 import {
@@ -51,6 +51,7 @@ const state = {
   attachments: [],
   streaming: null,
   thinkingOn: true,
+  webSearchOn: true,
   searchTerm: '',
   menuEl: null,
   collapsed: false,
@@ -187,7 +188,6 @@ function groupLabel(timestamp) {
 
 function cacheDom() {
   dom.app = $('app');
-  dom.sidebar = $('sidebar');
   dom.sidebarBackdrop = $('sidebar-backdrop');
   dom.collapseBtn = $('collapse-btn');
   dom.sidebarToggle = $('sidebar-toggle');
@@ -208,7 +208,6 @@ function cacheDom() {
   dom.settingsBtn = $('settings-btn');
 
   dom.chatScroll = $('chat-scroll');
-  dom.chatInner = $('chat-inner');
   dom.welcome = $('welcome');
   dom.apiNotice = $('api-notice');
   dom.noticeSettings = $('notice-settings');
@@ -217,10 +216,10 @@ function cacheDom() {
   dom.scrollBottom = $('scroll-bottom');
 
   dom.composerArea = $('composer-area');
-  dom.composerShell = $('composer-shell');
   dom.composer = $('composer');
   dom.attachments = $('attachments');
   dom.fileInput = $('file-input');
+  dom.webSearchToggle = $('websearch-toggle');
   dom.thinkingToggle = $('thinking-toggle');
   dom.sendHint = $('send-hint');
   dom.sendBtn = $('send-btn');
@@ -242,7 +241,6 @@ function cacheDom() {
   dom.setBaseUrl = $('set-base-url');
   dom.setModel = $('set-model');
   dom.modelPresets = $('model-presets');
-  dom.setEffort = $('set-effort');
   dom.setMaxTokens = $('set-max-tokens');
   dom.setSystemPrompt = $('set-system-prompt');
   dom.resetPrompt = $('reset-prompt');
@@ -250,11 +248,10 @@ function cacheDom() {
   dom.testResult = $('test-result');
 
   dom.setThinking = $('set-thinking');
+  dom.setWebSearch = $('set-web-search');
   dom.setFoldThinking = $('set-fold-thinking');
   dom.setIncludeUsage = $('set-include-usage');
   dom.setSendOnEnter = $('set-send-on-enter');
-  dom.setSearchCount = $('set-search-count');
-  dom.setTemperature = $('set-temperature');
   dom.setTheme = $('set-theme');
   dom.setFontSize = $('set-font-size');
 
@@ -594,6 +591,7 @@ async function openConversation(id) {
   closeConversationMenu();
   state.convo = convo;
   state.thinkingOn = convo.thinking ?? state.settings.thinking;
+  state.webSearchOn = convo.webSearch ?? state.settings.webSearch;
   updateToggles();
   updateDocumentTitle();
   state.searchTerm = '';
@@ -615,6 +613,7 @@ function newChat({ focus = true } = {}) {
   updateDocumentTitle();
   state.attachments = [];
   state.thinkingOn = state.settings.thinking;
+  state.webSearchOn = state.settings.webSearch;
   updateToggles();
   renderAttachments();
   dom.composer.value = '';
@@ -792,9 +791,10 @@ function renderAssistantMessage(msg, { isLast = false } = {}) {
     const body = el.querySelector('.thinking-body');
     body.innerHTML = renderMarkdown(msg.reasoning, { highlight: false });
     const secs = msg.thinkingSecs || 0;
+    const thinkingName = msg.thinkingMode === false ? '思考' : '深度思考';
     el.querySelector('.thinking-label').textContent = secs
-      ? `已深度思考（用时 ${secs} 秒）`
-      : '已深度思考';
+      ? `已${thinkingName}（用时 ${secs} 秒）`
+      : `已${thinkingName}`;
   }
 
   if (msg.toolRuns?.length) {
@@ -873,6 +873,7 @@ function ensureConversation(firstText, hasImages) {
     createdAt: now,
     updatedAt: now,
     thinking: state.thinkingOn,
+    webSearch: state.webSearchOn,
     messages: [],
   };
   state.index.unshift({
@@ -933,7 +934,11 @@ function startThinkingClock(run) {
     if (run.thinkingEnd) return;
     const secs = Math.max(1, Math.round((Date.now() - run.thinkingStart) / 1000));
     const label = run.el.querySelector('.thinking-label');
-    if (label) label.textContent = `深度思考中… ${secs}s`;
+    if (label) {
+      label.textContent = `${
+        run.thinkingMode === false ? '思考中' : '深度思考中'
+      }… ${secs}s`;
+    }
   }, 500);
 }
 
@@ -943,7 +948,8 @@ function ensureThinkingVisible(run) {
   thinking.classList.remove('hidden');
   thinking.classList.add('open', 'streaming');
   thinking.querySelector('.thinking-toggle').setAttribute('aria-expanded', 'true');
-  run.el.querySelector('.thinking-label').textContent = '深度思考中…';
+  run.el.querySelector('.thinking-label').textContent =
+    run.thinkingMode === false ? '思考中…' : '深度思考中…';
 }
 
 function handleDelta(run, delta) {
@@ -968,7 +974,11 @@ function handleDelta(run, delta) {
       const thinking = run.el.querySelector('.thinking');
       thinking?.classList.remove('streaming');
       const label = run.el.querySelector('.thinking-label');
-      if (label) label.textContent = `已深度思考（用时 ${run.assistant.thinkingSecs} 秒）`;
+      if (label) {
+        label.textContent = `${
+          run.thinkingMode === false ? '已思考' : '已深度思考'
+        }（用时 ${run.assistant.thinkingSecs} 秒）`;
+      }
       clearInterval(run.thinkingTimer);
       if (state.settings.foldThinking && !run.thinkingTouched) {
         thinking?.classList.remove('open');
@@ -1026,21 +1036,22 @@ function addSources(run, sources) {
   if (run.assistant.sources.length) renderSources(run.el, run.assistant.sources);
 }
 
-function mapAnthropicUsage(usage) {
+function mapChatUsage(usage) {
   if (!usage) return null;
-  const input = Number(usage.input_tokens) || 0;
-  const cacheRead = Number(usage.cache_read_input_tokens) || 0;
-  const cacheCreate = Number(usage.cache_creation_input_tokens) || 0;
-  const output = Number(usage.output_tokens) || 0;
-  if (!input && !cacheRead && !cacheCreate && !output) return null;
-  const prompt = input + cacheRead + cacheCreate;
+  const prompt = Number(usage.prompt_tokens) || 0;
+  const output = Number(usage.completion_tokens) || 0;
+  if (!prompt && !output) return null;
+  const hit =
+    Number(usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens) || 0;
+  const miss = Number(usage.prompt_cache_miss_tokens ?? Math.max(0, prompt - hit)) || 0;
   return {
+    ...usage,
     prompt_tokens: prompt,
     completion_tokens: output,
-    total_tokens: prompt + output,
-    prompt_cache_hit_tokens: cacheRead,
-    prompt_cache_miss_tokens: input + cacheCreate,
-    prompt_tokens_details: { cached_tokens: cacheRead },
+    total_tokens: Number(usage.total_tokens) || prompt + output,
+    prompt_cache_hit_tokens: hit,
+    prompt_cache_miss_tokens: miss,
+    prompt_tokens_details: { ...(usage.prompt_tokens_details || {}), cached_tokens: hit },
   };
 }
 
@@ -1059,7 +1070,7 @@ function beginToolEntry(run, entry) {
   return entry;
 }
 
-function finishToolEntry(run, entry, { sources = [], meta = null, provider = 'messages' } = {}) {
+function finishToolEntry(run, entry, { sources = [], meta = null, provider = 'chat' } = {}) {
   entry.status = 'ok';
   entry.error = null;
   entry.count = sources.length;
@@ -1079,68 +1090,82 @@ function failToolEntry(run, entry, message) {
   refreshToolPanel(run);
 }
 
-function anthropicToolEntry(run, tool) {
+function chatToolQuery(input) {
+  if (!input || typeof input !== 'object') return '';
+  if (Array.isArray(input.queries)) return input.queries.filter(Boolean).join(' / ');
+  return input.query || input.url || '';
+}
+
+function chatToolEntry(run, tool) {
   const id = tool.id || uid('tool');
+  const input = tool.input && typeof tool.input === 'object' ? tool.input : {};
+  const args = { ...input, query: chatToolQuery(input) };
   let entry = run.toolEntries.find((item) => item.id === id);
   if (entry) {
-    if (tool.input && Object.keys(tool.input).length) {
-      entry.args = tool.input;
-      refreshToolPanel(run);
-    }
+    entry.args = { ...entry.args, ...args };
+    refreshToolPanel(run);
     return entry;
   }
   entry = {
     id,
-    name: tool.name || 'web_search',
-    args: tool.input || {},
+    name: 'web_search',
+    args,
     status: 'running',
     count: 0,
     links: [],
     error: null,
     meta: null,
-    provider: 'messages',
+    provider: 'chat',
   };
   return beginToolEntry(run, entry);
 }
 
-function addAnthropicToolUse(run, tool) {
+function addChatToolUse(run, tool) {
   if (state.streaming !== run) return;
-  anthropicToolEntry(run, tool);
+  chatToolEntry(run, tool);
 }
 
-function completeAnthropicToolUse(run, data) {
+function completeChatToolUse(run, data) {
   if (state.streaming !== run) return;
-  const results = Array.isArray(data.results) ? data.results : [];
+  const call = data.call || {};
+  const results = Array.isArray(data.results)
+    ? data.results
+    : Array.isArray(call.sources)
+      ? call.sources
+      : [];
   const sources = [];
   let toolError = '';
   for (const result of results) {
-    if (result?.type === 'web_search_tool_result_error') {
-      toolError = result.error_code || '搜索失败';
+    if (result?.error) {
+      toolError = result.error.code || result.error.message || '搜索失败';
       continue;
     }
     if (!result?.url) continue;
     sources.push({
       title: result.title || hostOf(result.url) || result.url,
       url: result.url,
-      site: hostOf(result.url),
-      date: result.page_age || result.published_date || '',
-      snippet: '',
+      site: result.site_name || hostOf(result.url),
+      date: result.published_at || result.page_age || '',
+      snippet: result.snippet || '',
       summary: '',
     });
   }
+  if (!toolError && data.error?.code) toolError = data.error.code;
+  if (!toolError && call.error?.code) toolError = call.error.code;
 
-  let entry = run.toolEntries.find((item) => item.id === data.toolUseId);
+  const id = data.toolUseId || call.id || '';
+  let entry = run.toolEntries.find((item) => item.id === id);
   if (!entry) {
-    entry = anthropicToolEntry(run, {
-      id: data.toolUseId || uid('tool'),
-      name: 'web_search',
-      input: {},
+    entry = chatToolEntry(run, {
+      id: id || uid('tool'),
+      name: call.type || 'deepseek_web_search',
+      input: call.action || {},
     });
   }
   const meta = {
-    query: entry.args?.query || '',
+    query: chatToolQuery(call.action || entry.args),
     count: sources.length,
-    provider: 'messages',
+    provider: 'chat',
   };
   if (!sources.length) {
     entry.count = 0;
@@ -1148,10 +1173,27 @@ function completeAnthropicToolUse(run, data) {
     failToolEntry(run, entry, toolError || '搜索未返回结果');
     return;
   }
-  finishToolEntry(run, entry, { sources, meta });
+  finishToolEntry(run, entry, { sources, meta, provider: 'chat' });
 }
 
-function getConversationSystemMessage(convo, settings) {
+function annotationSources(annotations) {
+  const out = [];
+  const seen = new Set();
+  for (const item of annotations || []) {
+    const citation = item?.url_citation || item;
+    const url = citation?.url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push({
+      title: citation.title || hostOf(url) || url,
+      url,
+      site: hostOf(url),
+    });
+  }
+  return out;
+}
+
+function getConversationSystemMessage(convo, settings, webSearch = true) {
   const now = new Date();
   const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
   const promptSignature = settings.systemPrompt || '';
@@ -1159,14 +1201,16 @@ function getConversationSystemMessage(convo, settings) {
     !convo.systemMessage ||
     typeof convo.systemMessage !== 'string' ||
     convo.systemDateKey !== dateKey ||
-    convo.systemPromptSignature !== promptSignature;
+    convo.systemPromptSignature !== promptSignature ||
+    convo.systemWebSearch !== webSearch;
 
   if (stale) {
     // Changing the system message changes the whole prefix, so this is an
     // intentional (rare) cache miss.
-    convo.systemMessage = buildSessionSystemMessage(settings).content;
+    convo.systemMessage = buildSessionSystemMessage(settings, { webSearch }).content;
     convo.systemDateKey = dateKey;
     convo.systemPromptSignature = promptSignature;
+    convo.systemWebSearch = webSearch;
   }
   return convo.systemMessage;
 }
@@ -1175,7 +1219,11 @@ async function runAssistantTurn() {
   const convo = state.convo;
   const settings = state.settings;
   const useThinking = state.thinkingOn;
+  const useWebSearch = state.webSearchOn;
+  // The thinking button is a two-level switch: off = low effort, on = max effort.
+  const effort = useThinking ? 'max' : 'low';
   convo.thinking = useThinking;
+  convo.webSearch = useWebSearch;
 
   const assistant = {
     id: uid('m'),
@@ -1190,6 +1238,7 @@ async function runAssistantTurn() {
     error: null,
     stopped: false,
     thinkingSecs: 0,
+    thinkingMode: useThinking,
   };
   convo.messages.push(assistant);
 
@@ -1206,6 +1255,7 @@ async function runAssistantTurn() {
     thinkingStart: Date.now(),
     thinkingEnd: 0,
     thinkingTouched: false,
+    thinkingMode: useThinking,
     thinkingTimer: null,
     thinkingRenderTimer: null,
     answerTimer: null,
@@ -1219,34 +1269,36 @@ async function runAssistantTurn() {
   assistantEl.querySelector('.pending-hint')?.classList.remove('hidden');
   requestAnimationFrame(() => scrollToBottom(true, true));
 
-  const systemMessage = getConversationSystemMessage(convo, settings);
+  const systemMessage = getConversationSystemMessage(convo, settings, useWebSearch);
   let error = null;
   let aborted = false;
 
   try {
-    const messages = buildAnthropicMessages(convo.messages.slice(0, -1));
-    await streamAnthropicTurn({
+    const messages = buildChatMessages(convo.messages.slice(0, -1));
+    await streamChatTurn({
       baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
       model: settings.model,
       system: systemMessage,
       messages,
-      thinking: useThinking,
-      effort: settings.thinkingEffort,
+      // Off is still a thinking mode; it just uses the low effort level.
+      thinking: true,
+      effort,
       maxTokens: settings.maxTokens,
-      temperature: settings.temperature,
-      searchCount: settings.searchCount,
+      webSearch: useWebSearch,
       signal: controller.signal,
       onText: (text) => handleDelta(run, { content: text }),
       onReasoning: (text) => handleDelta(run, { reasoning: text }),
-      onToolUse: (tool) => addAnthropicToolUse(run, tool),
-      onToolResult: (data) => completeAnthropicToolUse(run, data),
+      onToolUse: (tool) => addChatToolUse(run, tool),
+      onToolResult: (data) => completeChatToolUse(run, data),
       onUsage: (usage) => {
-        const mapped = mapAnthropicUsage(usage);
+        const mapped = mapChatUsage(usage);
         if (mapped) run.usage = mapped;
       },
-      onFinish: ({ stopReason }) => {
-        run.finishReason = stopReason === 'max_tokens' ? 'length' : stopReason || '';
+      onFinish: ({ stopReason, annotations }) => {
+        run.finishReason = stopReason === 'length' ? 'length' : stopReason || '';
+        const sources = annotationSources(annotations);
+        if (sources.length) addSources(run, sources);
       },
     });
   } catch (err) {
@@ -1319,9 +1371,10 @@ async function finishTurn(run, { aborted = false, error = null } = {}) {
     if (body) body.innerHTML = renderMarkdown(assistant.reasoning, { highlight: false });
     const label = run.el.querySelector('.thinking-label');
     if (label) {
+      const thinkingName = run.thinkingMode === false ? '思考' : '深度思考';
       label.textContent = assistant.thinkingSecs
-        ? `已深度思考（用时 ${assistant.thinkingSecs} 秒）`
-        : '已深度思考';
+        ? `已${thinkingName}（用时 ${assistant.thinkingSecs} 秒）`
+        : `已${thinkingName}`;
     }
     if (settings.foldThinking && !run.thinkingTouched) {
       thinking?.classList.remove('open');
@@ -1523,6 +1576,7 @@ function updateApiNotice() {
 
 function updateToggles() {
   setToggle(dom.thinkingToggle, state.thinkingOn);
+  setToggle(dom.webSearchToggle, state.webSearchOn);
 }
 
 function updateScrollState() {
@@ -1689,7 +1743,7 @@ function conversationToMarkdown(convo) {
       lines.push('');
       if (msg.reasoning) {
         lines.push('<details>');
-        lines.push('<summary>深度思考</summary>');
+        lines.push(`<summary>${msg.thinkingMode === false ? '思考' : '深度思考'}</summary>`);
         lines.push('');
         lines.push(msg.reasoning);
         lines.push('');
@@ -1757,6 +1811,7 @@ async function importEverything(file) {
     state.settings = await loadSettings();
     state.index = await loadIndex();
     state.thinkingOn = state.settings.thinking;
+    state.webSearchOn = state.settings.webSearch;
     applyTheme();
     applyFontSize();
     updateModelUI();
@@ -1796,6 +1851,7 @@ async function clearEverything() {
   state.ui = {};
   state.convo = null;
   state.thinkingOn = state.settings.thinking;
+  state.webSearchOn = state.settings.webSearch;
   dom.settingsDialog.close();
   newChat({ focus: false });
   applyTheme();
@@ -1923,10 +1979,20 @@ function bindEvents() {
 
   dom.sendBtn.addEventListener('click', sendMessage);
 
+  dom.webSearchToggle.addEventListener('click', () => {
+    state.webSearchOn = !state.webSearchOn;
+    updateToggles();
+    toast(state.webSearchOn ? '已开启联网搜索' : '已关闭联网搜索');
+  });
+
   dom.thinkingToggle.addEventListener('click', () => {
     state.thinkingOn = !state.thinkingOn;
     updateToggles();
-    toast(state.thinkingOn ? '已开启深度思考' : '已关闭深度思考');
+    toast(
+      state.thinkingOn
+        ? '已开启深度思考（max 强度）'
+        : '已切换为低强度思考（low 强度）'
+    );
   });
 
   dom.fileInput.addEventListener('change', () => {
@@ -1961,6 +2027,22 @@ function bindEvents() {
   });
 
   dom.noticeSettings.addEventListener('click', () => openSettings('api'));
+
+  dom.messages.addEventListener('click', async (e) => {
+    const copyBtn = e.target.closest('.code-copy');
+    if (!copyBtn) return;
+    const code = copyBtn.closest('.code-block')?.querySelector('pre > code');
+    if (!code) return;
+    try {
+      await copyText(code.textContent || '');
+      copyBtn.textContent = '已复制';
+    } catch (_) {
+      copyBtn.textContent = '复制失败';
+    }
+    setTimeout(() => {
+      copyBtn.textContent = '复制';
+    }, 1500);
+  });
 
   dom.messages.addEventListener('click', (e) => {
     const thinkingToggle = e.target.closest('.thinking-toggle');
@@ -2284,6 +2366,7 @@ async function init() {
   const ui = await loadUiState();
   state.ui = ui && typeof ui === 'object' && !Array.isArray(ui) ? ui : {};
   state.thinkingOn = state.settings.thinking;
+  state.webSearchOn = state.settings.webSearch;
   state.collapsed = !!state.ui.sidebarCollapsed;
 
   applyTheme();
